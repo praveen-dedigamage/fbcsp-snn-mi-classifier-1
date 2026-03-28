@@ -142,6 +142,13 @@ def _parse_freq_bands(value: str) -> List[Tuple[float, float]]:
     return [(float(lo), float(hi)) for lo, hi in parsed]
 
 
+def _parse_band_range(value: str) -> Tuple[float, float]:
+    """Parse a string like ``"(4.0,30.0)"`` into a ``(lo, hi)`` tuple."""
+    import ast
+    lo, hi = ast.literal_eval(value)
+    return (float(lo), float(hi))
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Build and return the top-level argument parser."""
     parser = argparse.ArgumentParser(
@@ -170,6 +177,11 @@ def build_parser() -> argparse.ArgumentParser:
     train_p.add_argument("--n-adaptive-bands", type=int, default=6)
     train_p.add_argument("--freq-bands", type=_parse_freq_bands,
                          default=[(4, 8), (8, 14), (14, 30)])
+    train_p.add_argument("--band-range", type=_parse_band_range,
+                         default=(4.0, 40.0),
+                         help="Candidate band search range, e.g. '(4.0,30.0)'")
+    train_p.add_argument("--bandwidth", type=float, default=4.0)
+    train_p.add_argument("--band-step", type=float, default=2.0)
     train_p.add_argument("--csp-components-per-band", type=int, default=4)
     train_p.add_argument("--lambda-r", type=float, default=0.0001)
     train_p.add_argument("--euclidean-alignment", action="store_true", default=True)
@@ -235,6 +247,7 @@ def config_from_args(args: argparse.Namespace) -> Config:
     # mode-specific fields (all optional — Config has defaults)
     optional_fields = [
         "n_folds", "fold", "adaptive_bands", "n_adaptive_bands", "freq_bands",
+        "band_range", "bandwidth", "band_step",
         "csp_components_per_band", "lambda_r", "euclidean_alignment",
         "base_thresh", "adapt_inc", "decay",
         "hidden_neurons", "population_per_class", "beta", "dropout_prob",
