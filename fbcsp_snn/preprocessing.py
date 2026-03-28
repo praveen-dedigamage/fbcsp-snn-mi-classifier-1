@@ -141,7 +141,13 @@ def apply_filter_bank(
 # ---------------------------------------------------------------------------
 
 class PairwiseCSP:
-    """Pairwise CSP with dual-end eigenvector extraction.
+    """Pairwise CSP with dual-end eigenvector extraction and optional EA.
+
+    Euclidean Alignment (EA, He et al. 2019) is applied per band before CSP
+    fitting.  For each band it computes the mean covariance ``R`` of all
+    training trials (class-agnostic) and whitens every trial by ``R^{-1/2}``.
+    The whiteners are stored and reused in ``transform`` so val/test data are
+    aligned with the training distribution without leakage.
 
     Parameters
     ----------
@@ -151,22 +157,34 @@ class PairwiseCSP:
     lambda_r : float
         Tikhonov regularisation strength applied to each covariance matrix.
         ``Σ_reg = (1 - λ) Σ + λ I``.
+    euclidean_alignment : bool
+        If ``True`` (default), apply Euclidean Alignment before CSP fitting.
 
     Attributes
     ----------
     filters_ : Dict[Tuple[int, _Pair], np.ndarray]
         Fitted spatial filters.  Key is ``(band_idx, (c1, c2))``, value is
         ``W`` of shape ``(n_channels, 2 * m)``.
+    ea_whiteners_ : Dict[int, np.ndarray]
+        Per-band EA whitener ``R^{-1/2}``, shape ``(n_channels, n_channels)``.
+        Empty when ``euclidean_alignment=False``.
     pairs_ : List[_Pair]
         All unique class pairs, sorted.
     classes_ : np.ndarray
         Unique class labels seen during ``fit``.
     """
 
-    def __init__(self, m: int = 2, lambda_r: float = 0.0001) -> None:
+    def __init__(
+        self,
+        m: int = 2,
+        lambda_r: float = 0.0001,
+        euclidean_alignment: bool = True,
+    ) -> None:
         self.m = m
         self.lambda_r = lambda_r
+        self.euclidean_alignment = euclidean_alignment
         self.filters_: Dict[Tuple[int, _Pair], np.ndarray] = {}
+        self.ea_whiteners_: Dict[int, np.ndarray] = {}
         self.pairs_: List[_Pair] = []
         self.classes_: np.ndarray = np.array([])
 
@@ -200,6 +218,12 @@ class PairwiseCSP:
         n_channels = X_bands[0].shape[1]
 
         for b_idx, X_band in enumerate(X_bands):
+            # ---- Euclidean Alignment ----
+            if self.euclidean_alignment:
+                R_invsqrt = _compute_ea_whitener(X_band)
+                self.ea_whiteners_[b_idx] = R_invsqrt
+                X_band = _apply_ea(X_band, R_invsqrt)
+
             for pair in self.pairs_:
                 c1, c2 = pair
                 cov_a = _mean_normalised_cov(X_band[y == c1])
@@ -213,8 +237,10 @@ class PairwiseCSP:
         n_bands = len(X_bands)
         n_pairs = len(self.pairs_)
         logger.info(
-            "PairwiseCSP fit: %d bands × %d pairs × %d filters = %d total filters",
+            "PairwiseCSP fit: %d bands × %d pairs × %d filters = %d total filters"
+            "  (EA: %s)",
             n_bands, n_pairs, 2 * self.m, n_bands * n_pairs * 2 * self.m,
+            self.euclidean_alignment,
         )
         return self
 
@@ -248,13 +274,12 @@ class PairwiseCSP:
         projections: Dict[_Pair, List[np.ndarray]] = {p: [] for p in self.pairs_}
 
         for b_idx, X_band in enumerate(X_bands):
+            # Apply stored EA whitener (fitted on training data)
+            if self.euclidean_alignment and b_idx in self.ea_whiteners_:
+                X_band = _apply_ea(X_band, self.ea_whiteners_[b_idx])
+
             for pair in self.pairs_:
                 W = self.filters_[(b_idx, pair)]  # (n_channels, 2m)
-                # W.T: (2m, n_channels) × X_band.T-like → use einsum
-                # X_band: (n_trials, n_channels, n_samples)
-                # projected: (n_trials, 2m, n_samples)
-                # W: (n_channels, 2m)  X_band: (n_trials, n_channels, n_samples)
-                # -> proj: (n_trials, 2m, n_samples)
                 proj = np.einsum("cf,tcs->tfs", W, X_band)
                 projections[pair].append(proj)
 
@@ -290,6 +315,52 @@ class PairwiseCSP:
 # ---------------------------------------------------------------------------
 # Private helpers
 # ---------------------------------------------------------------------------
+
+def _compute_ea_whitener(X: np.ndarray) -> np.ndarray:
+    """Compute the EA whitener ``R^{-1/2}`` from a set of trials.
+
+    ``R`` is the arithmetic mean of per-trial covariance matrices
+    (class-agnostic).  The inverse square root is computed via eigendecomposition
+    of the symmetric matrix for numerical stability.
+
+    Parameters
+    ----------
+    X : np.ndarray
+        Shape ``(n_trials, n_channels, n_samples)``.
+
+    Returns
+    -------
+    np.ndarray
+        ``R^{-1/2}``, shape ``(n_channels, n_channels)``.
+    """
+    n_trials, n_channels, n_samples = X.shape
+    # Per-trial covariance (n_trials, n_channels, n_channels)
+    covs = np.einsum("tcs,tds->tcd", X, X) / n_samples
+    R = covs.mean(axis=0)  # (n_channels, n_channels)
+    # Eigendecomposition (eigh: symmetric, eigenvalues ascending)
+    eigenvalues, eigenvectors = eigh(R)
+    eigenvalues = np.maximum(eigenvalues, 1e-10)   # clamp numerical negatives
+    R_invsqrt = (eigenvectors * (eigenvalues ** -0.5)[None, :]) @ eigenvectors.T
+    return R_invsqrt.astype(np.float64)
+
+
+def _apply_ea(X: np.ndarray, R_invsqrt: np.ndarray) -> np.ndarray:
+    """Apply EA whitening: ``X̃_i = R^{-1/2} @ X_i`` for each trial.
+
+    Parameters
+    ----------
+    X : np.ndarray
+        Shape ``(n_trials, n_channels, n_samples)``.
+    R_invsqrt : np.ndarray
+        Shape ``(n_channels, n_channels)``.
+
+    Returns
+    -------
+    np.ndarray
+        Whitened array, same shape as *X*.
+    """
+    return np.einsum("cd,tds->tcs", R_invsqrt, X).astype(np.float32)
+
 
 def _mean_normalised_cov(X_trials: np.ndarray) -> np.ndarray:
     """Compute the mean normalised covariance matrix over a set of trials.

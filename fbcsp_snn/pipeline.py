@@ -202,7 +202,8 @@ def _run_single_fold(
     X_bands_te  = apply_filter_bank(X_test,  bands, sfreq, order=4)
 
     # ---- Pairwise CSP ----
-    csp = PairwiseCSP(m=m, lambda_r=cfg.lambda_r)
+    csp = PairwiseCSP(m=m, lambda_r=cfg.lambda_r,
+                      euclidean_alignment=cfg.euclidean_alignment)
     csp.fit(X_bands_tr, y_f_tr)
 
     proj_tr  = csp.transform(X_bands_tr)
