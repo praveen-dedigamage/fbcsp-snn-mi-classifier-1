@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=fbcsp_snn
-#SBATCH --account=<YOUR_PROJECT>        # replace with your CSC project, e.g. project_2012345
+#SBATCH --account=project_2003397
 #SBATCH --partition=gpu
 #SBATCH --gres=gpu:v100:1
 #SBATCH --cpus-per-task=4              # 4 CPU threads for data loading / scipy
@@ -15,6 +15,7 @@
 # Each task trains one subject (SLURM_ARRAY_TASK_ID = subject ID)
 #
 # Submit:
+#   cd /scratch/project_2003397/praveen/fbcsp-snn-mi-classifier-1
 #   mkdir -p logs
 #   sbatch run_puhti_array.sh
 #
@@ -26,28 +27,26 @@
 set -euo pipefail
 
 SUBJECT_ID=${SLURM_ARRAY_TASK_ID}
+PROJECT_DIR=/scratch/project_2003397/praveen/fbcsp-snn-mi-classifier-1
 
 echo "=============================================="
 echo "  FBCSP-SNN  Subject ${SUBJECT_ID}"
 echo "  Node:   $(hostname)"
 echo "  GPU:    $(nvidia-smi --query-gpu=name --format=csv,noheader)"
 echo "  Start:  $(date)"
+echo "  Dir:    ${PROJECT_DIR}"
 echo "=============================================="
 
 # ---- Environment ----------------------------------------------------------
 module purge
-module load pytorch/2.1          # adjust to available module; must include CUDA
-module load python-data/3.10-22.09   # or whichever Python module provides scipy/sklearn
+source "${PROJECT_DIR}/.venv/bin/activate"
 
-# If using a venv instead of modules:
-# source /scratch/<project>/<user>/venv/bin/activate
-
-# Ensure the project root is on the Python path
-PROJECT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 export PYTHONPATH="${PROJECT_DIR}:${PYTHONPATH:-}"
 
-# MOABB downloads data here; point to scratch for quota reasons
-export MNE_DATA=/scratch/${SLURM_JOB_ACCOUNT}/mne_data
+# MOABB/MNE data cache — keep on scratch, not home (home quota is small)
+export MNE_DATA=/scratch/project_2003397/praveen/mne_data
+
+cd "${PROJECT_DIR}"
 
 # ---- Training -------------------------------------------------------------
 python main.py train \
@@ -80,23 +79,16 @@ echo "End: $(date)"
 exit ${EXIT_CODE}
 
 # ============================================================
-# After all array tasks complete, run aggregation:
+# After all 9 array tasks complete, run aggregation + analysis:
 #
-#   python analyze_results.py --results-dir Results --subjects 1 2 3 4 5 6 7 8 9
-#
-# Or trigger it automatically as a dependent job:
-#
-#   sbatch --dependency=afterok:<ARRAY_JOBID> <<'EOF'
-#   #!/bin/bash
-#   #SBATCH --job-name=fbcsp_snn_aggregate
-#   #SBATCH --account=<YOUR_PROJECT>
-#   #SBATCH --partition=small
-#   #SBATCH --time=00:30:00
-#   #SBATCH --mem=8G
-#   module load python-data/3.10-22.09
+#   cd /scratch/project_2003397/praveen/fbcsp-snn-mi-classifier-1
+#   source .venv/bin/activate
 #   for S in 1 2 3 4 5 6 7 8 9; do
 #       python main.py aggregate --subject-id $S --n-folds 10
 #   done
 #   python analyze_results.py --results-dir Results --subjects 1 2 3 4 5 6 7 8 9
-#   EOF
+#
+# Or submit as a dependent job (runs automatically after all subjects finish):
+#
+#   sbatch --dependency=afterok:<ARRAY_JOBID> run_puhti_aggregate.sh
 # ============================================================
