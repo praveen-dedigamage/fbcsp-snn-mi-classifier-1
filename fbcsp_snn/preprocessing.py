@@ -159,6 +159,11 @@ class PairwiseCSP:
         ``Σ_reg = (1 - λ) Σ + λ I``.
     euclidean_alignment : bool
         If ``True`` (default), apply Euclidean Alignment before CSP fitting.
+    riemannian_mean : bool
+        If ``True`` (default), use the Riemannian (Fréchet) mean of the
+        per-class covariance matrices instead of the arithmetic mean.
+        Avoids the SPD swelling effect and better represents the geometric
+        centre of the covariance distribution on the manifold.
 
     Attributes
     ----------
@@ -179,10 +184,12 @@ class PairwiseCSP:
         m: int = 2,
         lambda_r: float = 0.0001,
         euclidean_alignment: bool = True,
+        riemannian_mean: bool = True,
     ) -> None:
         self.m = m
         self.lambda_r = lambda_r
         self.euclidean_alignment = euclidean_alignment
+        self.riemannian_mean = riemannian_mean
         self.filters_: Dict[Tuple[int, _Pair], np.ndarray] = {}
         self.ea_whiteners_: Dict[int, np.ndarray] = {}
         self.pairs_: List[_Pair] = []
@@ -224,10 +231,12 @@ class PairwiseCSP:
                 self.ea_whiteners_[b_idx] = R_invsqrt
                 X_band = _apply_ea(X_band, R_invsqrt)
 
+            _cov_fn = _riemannian_mean_cov if self.riemannian_mean else _mean_normalised_cov
+
             for pair in self.pairs_:
                 c1, c2 = pair
-                cov_a = _mean_normalised_cov(X_band[y == c1])
-                cov_b = _mean_normalised_cov(X_band[y == c2])
+                cov_a = _cov_fn(X_band[y == c1])
+                cov_b = _cov_fn(X_band[y == c2])
                 cov_a_reg = _regularise(cov_a, self.lambda_r)
                 cov_b_reg = _regularise(cov_b, self.lambda_r)
 
@@ -238,9 +247,9 @@ class PairwiseCSP:
         n_pairs = len(self.pairs_)
         logger.info(
             "PairwiseCSP fit: %d bands × %d pairs × %d filters = %d total filters"
-            "  (EA: %s)",
+            "  (EA: %s  RiemannMean: %s)",
             n_bands, n_pairs, 2 * self.m, n_bands * n_pairs * 2 * self.m,
-            self.euclidean_alignment,
+            self.euclidean_alignment, self.riemannian_mean,
         )
         return self
 
@@ -360,6 +369,95 @@ def _apply_ea(X: np.ndarray, R_invsqrt: np.ndarray) -> np.ndarray:
         Whitened array, same shape as *X*.
     """
     return np.einsum("cd,tds->tcs", R_invsqrt, X).astype(np.float32)
+
+
+def _spd_sqrt_invsqrt(M: np.ndarray) -> tuple:
+    """Compute (M^{1/2}, M^{-1/2}) for an SPD matrix via eigendecomposition.
+
+    Parameters
+    ----------
+    M : np.ndarray
+        Symmetric positive definite matrix, shape ``(n, n)``.
+
+    Returns
+    -------
+    tuple
+        ``(M_sqrt, M_invsqrt)``, each shape ``(n, n)``.
+    """
+    vals, vecs = eigh(M)
+    vals = np.maximum(vals, 1e-10)
+    M_sqrt    = (vecs * np.sqrt(vals))        @ vecs.T
+    M_invsqrt = (vecs * (1.0 / np.sqrt(vals))) @ vecs.T
+    return M_sqrt, M_invsqrt
+
+
+def _spd_log(S: np.ndarray) -> np.ndarray:
+    """Matrix logarithm of an SPD matrix S = V diag(d) V^T → V diag(log d) V^T."""
+    vals, vecs = eigh(S)
+    vals = np.maximum(vals, 1e-10)
+    return (vecs * np.log(vals)) @ vecs.T
+
+
+def _spd_exp(S: np.ndarray) -> np.ndarray:
+    """Matrix exponential of a symmetric matrix S = V diag(d) V^T → V diag(exp d) V^T."""
+    vals, vecs = eigh(S)
+    return (vecs * np.exp(vals)) @ vecs.T
+
+
+def _riemannian_mean_cov(
+    X_trials: np.ndarray,
+    max_iter: int = 50,
+    tol: float = 1e-7,
+) -> np.ndarray:
+    """Riemannian (Fréchet) mean of trace-normalised covariance matrices.
+
+    Uses gradient descent on the SPD manifold (Moakher 2005).  Each step maps
+    all covariances to the tangent space at the current estimate via the matrix
+    logarithm, takes the Euclidean mean there, and maps back via the matrix
+    exponential.  Convergence is quadratic near the true mean.
+
+    Parameters
+    ----------
+    X_trials : np.ndarray
+        Shape ``(n_trials, n_channels, n_samples)``.
+    max_iter : int
+        Maximum gradient descent iterations.
+    tol : float
+        Frobenius-norm convergence threshold.
+
+    Returns
+    -------
+    np.ndarray
+        Riemannian mean covariance, shape ``(n_channels, n_channels)``.
+    """
+    n_trials = X_trials.shape[0]
+
+    # Per-trial trace-normalised covariance
+    covs = np.einsum("tcs,tds->tcd", X_trials, X_trials)   # (n_trials, C, C)
+    traces = np.trace(covs, axis1=1, axis2=2)[:, None, None]
+    covs = covs / (traces + 1e-12)
+
+    # Initialise with arithmetic mean
+    M = covs.mean(axis=0)
+
+    for _ in range(max_iter):
+        M_sqrt, M_invsqrt = _spd_sqrt_invsqrt(M)
+
+        # Gradient: mean of log-mapped covariances in tangent space at M
+        grad = np.zeros_like(M)
+        for C in covs:
+            grad += _spd_log(M_invsqrt @ C @ M_invsqrt)
+        grad /= n_trials
+
+        # Retract back to manifold
+        M_new = M_sqrt @ _spd_exp(grad) @ M_sqrt
+
+        if np.linalg.norm(M_new - M, "fro") < tol:
+            M = M_new
+            break
+        M = M_new
+
+    return M
 
 
 def _mean_normalised_cov(X_trials: np.ndarray) -> np.ndarray:

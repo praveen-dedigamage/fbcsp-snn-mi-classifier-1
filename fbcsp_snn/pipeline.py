@@ -203,7 +203,8 @@ def _run_single_fold(
 
     # ---- Pairwise CSP ----
     csp = PairwiseCSP(m=m, lambda_r=cfg.lambda_r,
-                      euclidean_alignment=cfg.euclidean_alignment)
+                      euclidean_alignment=cfg.euclidean_alignment,
+                      riemannian_mean=cfg.riemannian_mean)
     csp.fit(X_bands_tr, y_f_tr)
 
     proj_tr  = csp.transform(X_bands_tr)
@@ -340,6 +341,8 @@ def _run_single_fold(
         "n_input_features":   n_input,
         "bands":              [[float(lo), float(hi)] for lo, hi in bands],
         "adaptive_bands":     cfg.adaptive_bands,
+        "euclidean_alignment": cfg.euclidean_alignment,
+        "riemannian_mean":    cfg.riemannian_mean,
         "csp_m":              m,
         "lambda_r":           cfg.lambda_r,
         "hidden_neurons":     cfg.hidden_neurons,
