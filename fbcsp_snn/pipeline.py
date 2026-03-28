@@ -302,8 +302,9 @@ def _run_single_fold(
 
     # ---- Weight histograms ----
     plot_weight_histograms(
-        model, model_int8,
+        model,
         save_path=fold_dir / "weight_histograms.png",
+        quantized_model=model_int8,
         title=f"Subject {cfg.subject_id} Fold {fold_idx} — Weight Distributions",
     )
 
