@@ -24,7 +24,11 @@ from typing import List, Optional, Tuple
 import numpy as np
 import torch
 import torch.optim as optim
-from torch.amp import GradScaler, autocast
+try:
+    from torch.amp import GradScaler, autocast   # torch >= 2.2
+except ImportError:
+    from torch.cuda.amp import GradScaler        # torch 2.1.x
+    from torch import autocast                   # type: ignore[assignment]
 
 from fbcsp_snn import DEVICE, setup_logger
 from fbcsp_snn.losses import make_target_spikes, van_rossum_loss
