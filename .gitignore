@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Claude Code internal
+.claude/
+
+# MOABB / MNE data downloads (large — fetch at runtime)
+C-/
+
+# Training artifacts — keep JSON/CSV/PNG, exclude large binaries
+Results/**/*.pt
+Results/**/*.pkl
+
+# But keep the summary files and plots
+!Results/**/*.json
+!Results/**/*.csv
+!Results/**/*.png
+
+# SLURM logs
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
