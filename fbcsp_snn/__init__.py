@@ -5,12 +5,13 @@ import logging
 import sys
 
 import torch
-import torch._dynamo
 
-# Suppress Triton/inductor compilation errors globally and fall back to eager.
-# Required for Volta GPUs (V100, sm_70) where Triton PTX codegen is broken
-# in PyTorch 2.1.x — affects both model forward and loss backward passes.
-torch._dynamo.config.suppress_errors = True
+# Disable TorchDynamo/Inductor entirely.
+# On Volta GPUs (V100, sm_70) with PyTorch 2.1.x, Triton PTX codegen fails
+# and inductor tries to write large cached kernels to /tmp, which exhausts
+# the node's tmpfs.  Eager mode is correct and fast enough for our small SNN.
+import os
+os.environ.setdefault("TORCHDYNAMO_DISABLE", "1")
 
 # ---------------------------------------------------------------------------
 # Logger

@@ -45,6 +45,15 @@ source "${PROJECT_DIR}/.venv/bin/activate"
 export PYTHONPATH="${PROJECT_DIR}:${PYTHONPATH:-}"
 export MNE_DATA=/scratch/project_2003397/praveen/mne_data
 
+# Redirect temp writes to scratch — /tmp on compute nodes is a small tmpfs
+# and torch inductor fills it with compiled kernel files, causing ENOSPC.
+export TMPDIR=/scratch/project_2003397/praveen/tmp
+mkdir -p "${TMPDIR}"
+
+# Disable TorchDynamo/Inductor entirely — V100 (sm_70) can't use Triton and
+# inductor compiled kernels fill /tmp even when compilation fails.
+export TORCHDYNAMO_DISABLE=1
+
 cd "${PROJECT_DIR}"
 
 python main.py train \
