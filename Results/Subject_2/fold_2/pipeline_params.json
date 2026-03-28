@@ -1,0 +1,48 @@
+{
+  "subject_id": 2,
+  "fold": 2,
+  "dataset": "BNCI2014_001",
+  "n_classes": 4,
+  "n_input_features": 72,
+  "bands": [
+    [
+      4.0,
+      8.0
+    ],
+    [
+      26.0,
+      30.0
+    ],
+    [
+      34.0,
+      38.0
+    ],
+    [
+      20.0,
+      24.0
+    ],
+    [
+      28.0,
+      32.0
+    ],
+    [
+      36.0,
+      40.0
+    ]
+  ],
+  "adaptive_bands": true,
+  "csp_m": 2,
+  "lambda_r": 0.0001,
+  "hidden_neurons": 64,
+  "population_per_class": 20,
+  "beta": 0.95,
+  "feature_method": "mibif",
+  "feature_percentile": 50.0,
+  "best_val_acc_fp32": 0.534483,
+  "best_epoch": 70,
+  "stopped_epoch": 170,
+  "val_acc_fp32": 0.534483,
+  "val_acc_int8": 0.534483,
+  "test_acc_fp32": 0.454861,
+  "test_acc_int8": 0.458333
+}
