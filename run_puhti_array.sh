@@ -5,7 +5,7 @@
 #SBATCH --gres=gpu:v100:1
 #SBATCH --cpus-per-task=4              # 4 CPU threads for data loading / scipy
 #SBATCH --mem=32G
-#SBATCH --time=04:00:00
+#SBATCH --time=72:00:00
 #SBATCH --array=1-9                    # one task per BCI-IV-2a subject
 #SBATCH --output=logs/fbcsp_snn_S%a_%j.out
 #SBATCH --error=logs/fbcsp_snn_S%a_%j.err
