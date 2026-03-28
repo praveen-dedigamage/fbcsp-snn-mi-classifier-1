@@ -5,6 +5,12 @@ import logging
 import sys
 
 import torch
+import torch._dynamo
+
+# Suppress Triton/inductor compilation errors globally and fall back to eager.
+# Required for Volta GPUs (V100, sm_70) where Triton PTX codegen is broken
+# in PyTorch 2.1.x — affects both model forward and loss backward passes.
+torch._dynamo.config.suppress_errors = True
 
 # ---------------------------------------------------------------------------
 # Logger
