@@ -47,7 +47,7 @@ from fbcsp_snn.data import load_hdf5
 from fbcsp_snn.encoding import encode_tensor
 from fbcsp_snn.evaluation import compute_accuracy, compute_confusion_matrix
 from fbcsp_snn.mibif import MIBIFSelector
-from fbcsp_snn.model import SNNClassifier
+from fbcsp_snn.model import SNNClassifier, maybe_compile
 from fbcsp_snn.preprocessing import PairwiseCSP, ZNormaliser, apply_filter_bank
 from fbcsp_snn.quantization import quantize_model, quantization_report
 from fbcsp_snn.training import evaluate_model, train_fold
@@ -246,14 +246,14 @@ def _run_single_fold(
     )
 
     # ---- Train ----
-    model = SNNClassifier(
+    model = maybe_compile(SNNClassifier(
         n_input=n_input,
         n_hidden=cfg.hidden_neurons,
         n_classes=n_classes,
         population_per_class=cfg.population_per_class,
         beta=cfg.beta,
         dropout_prob=cfg.dropout_prob,
-    ).to(DEVICE)
+    ).to(DEVICE))
 
     result = train_fold(
         spikes_train=spikes_tr,
@@ -270,7 +270,7 @@ def _run_single_fold(
         patience=cfg.early_stopping_patience,
         warmup=cfg.early_stopping_warmup,
         tau_vr=10.0,
-        batch_size=32,
+        batch_size=64,
         device=DEVICE,
         fold_dir=fold_dir,
         log_every=max(1, cfg.epochs // 20),

@@ -27,8 +27,9 @@
 
 set -euo pipefail
 
-SUBJECT_ID=${1:?Usage: sbatch --job-name=S<N> run_puhti_subject.sh <subject_id>}
+SUBJECT_ID=${1:?Usage: sbatch --job-name=S<N> run_puhti_subject.sh <subject_id> [extra_args...]}
 FOLD_ID=${SLURM_ARRAY_TASK_ID}
+shift   # remaining args (if any) are passed through to python main.py train
 PROJECT_DIR=/scratch/project_2003397/praveen/fbcsp-snn-mi-classifier-1
 
 echo "=============================================="
@@ -67,7 +68,8 @@ python main.py train \
     --spiking-prob 0.7 \
     --feature-selection-method mibif \
     --feature-percentile 50.0 \
-    --results-dir Results
+    --results-dir Results \
+    "$@"
 
 EXIT_CODE=$?
 

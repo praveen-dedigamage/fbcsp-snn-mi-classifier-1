@@ -56,9 +56,11 @@ def _select_device() -> torch.device:
         props = torch.cuda.get_device_properties(device)
         _log = setup_logger()
         _log.info("GPU: %s  (%.1f GB VRAM)", props.name, props.total_memory / 1e9)
-        # Prefer TF32 on Ampere+ for matmul throughput
+        # Prefer TF32 on Ampere+ for matmul throughput (no-op on V100/Volta)
         torch.backends.cuda.matmul.allow_tf32 = True
         torch.backends.cudnn.allow_tf32 = True
+        # Auto-tune cuDNN kernels for fixed input sizes (free speedup per fold)
+        torch.backends.cudnn.benchmark = True
     else:
         device = torch.device("cpu")
         setup_logger().info("CUDA not available — running on CPU")
