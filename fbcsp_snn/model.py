@@ -196,9 +196,22 @@ def maybe_compile(model: nn.Module) -> nn.Module:
     """
     try:
         import triton  # noqa: F401
-        compiled = torch.compile(model, mode="default")
-        logger.info("torch.compile applied (Triton available)")
-        return compiled
     except ImportError:
         logger.info("torch.compile skipped (Triton not available)")
         return model
+
+    # Triton PTX codegen is unreliable on Volta (V100, sm_70) with
+    # PyTorch <= 2.1. Only compile on Ampere+ (sm_80+).
+    if torch.cuda.is_available():
+        major, _ = torch.cuda.get_device_capability()
+        if major < 8:
+            logger.info(
+                "torch.compile skipped (GPU is sm_%d0, Ampere sm_80+ required "
+                "for stable Triton PTX codegen)",
+                major,
+            )
+            return model
+
+    compiled = torch.compile(model, mode="default")
+    logger.info("torch.compile applied (Triton available, sm_80+)")
+    return compiled
