@@ -6,7 +6,7 @@
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32G
 #SBATCH --time=08:00:00
-#SBATCH --array=0-9                    # one task per fold (10 folds in parallel)
+#SBATCH --array=0-4                    # one task per fold (5 folds in parallel)
 #SBATCH --output=logs/fbcsp_snn_S%x_f%a_%j.out
 #SBATCH --error=logs/fbcsp_snn_S%x_f%a_%j.err
 
@@ -51,7 +51,7 @@ python main.py train \
     --moabb-dataset BNCI2014_001 \
     --subject-id "${SUBJECT_ID}" \
     --fold "${FOLD_ID}" \
-    --n-folds 10 \
+    --n-folds 5 \
     --adaptive-bands \
     --n-adaptive-bands 6 \
     --csp-components-per-band 4 \
