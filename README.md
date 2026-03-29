@@ -362,3 +362,228 @@ python tests/test_band_csp.py
 python tests/test_spike_snn.py
 python tests/test_cv_pipeline.py    # ~8 min on V100 (T_MAX=100)
 ```
+
+---
+
+## Training pipeline — step by step
+
+This section describes exactly what happens inside `run_train` for a single CV fold.
+
+### 0. Data loading
+
+```
+load_moabb(dataset, subject_id)
+  → X_train (n_trials, n_channels, n_samples)   — session 1
+  → X_test  (n_trials, n_channels, n_samples)   — session 2 (held-out, never touched during training)
+  → y_train, y_test  — class labels, 1-indexed (1 … C)
+```
+
+- BNCI2014_001: session 1 → training pool, session 2 → held-out test (~288 trials each).
+- Data is downloaded via MOABB on first run and cached in `~/mne_data/`.
+
+### 1. Cross-validation split
+
+```
+StratifiedKFold(n_splits=n_folds, shuffle=True, random_state=42)
+  → training indices  (X_f_tr, y_f_tr)
+  → validation indices (X_f_val, y_f_val)
+```
+
+- Only session-1 data is split. Session-2 (test) is always held out.
+- Labels are converted to 0-indexed (`y - 1`) for PyTorch tensors at this point.
+
+### 2. Adaptive band selection  *(fit on training split only)*
+
+```
+select_bands(X_f_tr, y_f_tr, sfreq, n_bands, bandwidth, step, band_range)
+  → bands: List[(lo, hi)]   e.g. [(8,12), (12,16), (18,22), ...]
+  → fisher_freqs, fisher_curve  (for plotting)
+```
+
+- Welch PSD computed per trial, averaged across channels.
+- Fisher discriminant ratio calculated at each frequency bin.
+- Dense candidates: 4 Hz wide, 2 Hz step, over the configured range (default 4–40 Hz).
+- Greedy selection of top-K candidates with a max 50% overlap constraint.
+- Saves `band_selection.png` showing the Fisher curve and selected bands.
+
+### 3. Bandpass filter bank
+
+```
+apply_filter_bank(X, bands, sfreq, order=4)
+  → X_bands: (n_trials, n_channels, n_bands, n_samples)
+```
+
+Applied independently to training, validation, and test splits using the same bands selected in step 2.
+
+### 4. Pairwise CSP with Euclidean Alignment  *(fit on training split only)*
+
+```
+PairwiseCSP(m=2, lambda_r=0.0001, euclidean_alignment=True, riemannian_mean=True)
+  .fit(X_bands_tr, y_f_tr)
+  .transform(X_bands_*)
+  → proj: dict { (class_a, class_b) → (n_trials, 2m × n_bands, n_samples) }
+```
+
+- **Euclidean Alignment (EA):** per-band whitening `X̃ = R^{-1/2} X` where R is the
+  Riemannian (Fréchet) mean covariance of all training trials. Reduces cross-trial
+  non-stationarity before CSP.
+- **Dual-end extraction:** first m AND last m eigenvectors per class pair.
+  Default m=2 → 4 filters per pair.
+- 4 classes → 6 pairs × 4 filters × 6 bands = **144 features total**.
+- EA whitener stored in the `PairwiseCSP` pickle for reproducible inference.
+
+### 5. Z-normalisation  *(fit on training split only)*
+
+```
+ZNormaliser().fit_transform(X_concat_tr) → X_norm_tr
+ZNormaliser().transform(X_concat_val)    → X_norm_val
+ZNormaliser().transform(X_concat_te)     → X_norm_te
+```
+
+Mean and std computed per feature on the training split. Same statistics applied to val and test.
+
+### 6. Adaptive-threshold spike encoding
+
+```
+encode_tensor(X_norm, base_thresh, adapt_inc, decay)
+  → spikes: (T, n_trials, n_features)   binary tensor
+```
+
+- Delta-based encoder: spike fires when `|signal[t] - signal[t-1]| > threshold`.
+- After a spike: `threshold += adapt_inc`. Every timestep: `threshold *= decay`.
+- Inner loop JIT-compiled with `@torch.jit.script`.
+
+### 7. MIBIF feature selection  *(fit on training spike counts only)*
+
+```
+MIBIFSelector(feature_percentile=50.0).fit_transform(spikes_tr, y_tr)
+  → spikes_tr  (T, n_trials, n_selected)   top-K% features
+```
+
+- `mutual_info_classif` on per-feature spike counts (sum over time).
+- Default: keep top 50% → 72 features from 144.
+- Same feature mask applied to val and test spikes.
+
+### 8. SNN construction and training
+
+```
+SNNClassifier(n_input, n_hidden=64, n_classes, population_per_class=20,
+              beta=0.95, dropout_prob=0.5)
+  → 2-layer LIF network
+  → n_output = n_classes × population_per_class  (80 neurons for 4-class)
+```
+
+Training loop (`train_fold`):
+
+| Stage | Detail |
+|---|---|
+| Optimiser | AdamW, lr=1e-3, weight_decay=0.1 |
+| Loss | Van Rossum (FFT convolution, τ=10 steps) |
+| Target spikes | Correct-class population fires at `spiking_prob=0.7`; wrong classes fire at 0 |
+| AMP | `torch.autocast` + `GradScaler` on CUDA (float16 stability) |
+| Early stopping | Monitor val accuracy; patience=100, warmup=100 epochs |
+| Checkpoint | Best model state saved to `best_model.pt` on val-acc improvement |
+
+### 9. Evaluation
+
+```
+evaluate_model(model, spikes_test, y_test_0, device)
+  → test_acc_fp32, test_preds_fp32
+```
+
+- Winner-take-all decoding: sum output spikes per class population → argmax.
+- Repeated with `quantize_model(model, bits=8)` for INT8-simulated accuracy.
+
+### 10. Artifact saving
+
+All outputs written to `Results/Subject_N/fold_K/`:
+
+| File | Contents |
+|---|---|
+| `best_model.pt` | PyTorch state dict at best validation accuracy |
+| `csp_filters.pkl` | Fitted `PairwiseCSP` (EA whiteners + eigenvectors) |
+| `znorm.pkl` | Fitted `ZNormaliser` (mean + std per feature) |
+| `mibif.pkl` | Fitted `MIBIFSelector` (selected feature indices) |
+| `pipeline_params.json` | Bands, metrics, hyperparameters |
+| `band_selection.png` | Fisher curve + selected band highlights |
+| `spike_propagation.png` | Spike raster for 4 training trials |
+| `neuron_traces.png` | Output LIF membrane potential + spike overlay |
+| `weight_histograms.png` | FP32 vs INT8-sim weight distributions |
+| `confusion_fp32.png` | Test-set confusion matrix (FP32) |
+| `confusion_int8.png` | Test-set confusion matrix (INT8-sim) |
+
+---
+
+## Inference pipeline — step by step
+
+`run_infer` re-applies the full trained pipeline to the held-out test set using only
+saved artifacts. No retraining, no re-fitting.
+
+### Prerequisites
+
+A completed training run for the target fold:
+
+```
+Results/Subject_N/fold_K/
+  ├── pipeline_params.json   ← bands + n_input_features read from here
+  ├── csp_filters.pkl
+  ├── znorm.pkl
+  ├── mibif.pkl              (if feature selection was used)
+  └── best_model.pt
+```
+
+### Steps
+
+**1. Load saved parameters**
+```python
+params = json.load("pipeline_params.json")
+bands   = params["bands"]            # selected frequency bands
+n_input = params["n_input_features"] # SNN input size
+```
+
+**2. Load test data**
+```
+load_moabb(dataset, subject_id) → X_test, y_test
+```
+Only the test split is used; training data is not reloaded.
+
+**3. Load preprocessing objects**
+```python
+csp   = pickle.load("csp_filters.pkl")   # PairwiseCSP with fitted EA whiteners
+znorm = pickle.load("znorm.pkl")          # ZNormaliser with fitted mean/std
+mibif = pickle.load("mibif.pkl")          # MIBIFSelector with fitted feature mask
+```
+
+**4. Preprocessing chain** *(same transforms as training, using training-derived parameters)*
+```
+apply_filter_bank(X_test, bands, sfreq, order=4)
+  → csp.transform(X_bands)       # EA whitening + CSP projection (training whitener/filters)
+  → ZNormaliser.transform(...)   # z-norm with training mean/std
+  → encode_tensor(...)           # adaptive-threshold spike encoding
+  → MIBIFSelector.transform(...) # keep training-selected features only
+  → spikes: (T, n_trials, n_features)
+```
+
+**5. Load model**
+```python
+model = SNNClassifier(n_input, n_hidden, n_classes, ...)
+model.load_state_dict(torch.load("best_model.pt"))
+model.eval()                        # dropout_prob=0.0 at inference
+```
+
+**6. FP32 inference**
+```
+evaluate_model(model, spikes, y_test_0, device)
+  → test_acc_fp32, test_preds_fp32
+```
+
+**7. INT8-simulated inference**
+```
+quantize_model(model, bits=8)       # symmetric per-tensor weight quantisation
+evaluate_model(model_int8, ...)
+  → test_acc_int8, test_preds_int8
+```
+
+**8. Output**
+- Logs `FP32 X.X%  INT8 X.X%` to stdout.
+- Saves `infer_confusion_fp32.png` and `infer_confusion_int8.png` to `fold_K/`.
