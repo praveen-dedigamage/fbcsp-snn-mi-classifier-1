@@ -87,6 +87,7 @@ class Config:
     data_path: Optional[str] = None
     fold: Optional[int] = None
     n_folds: int = 10
+    val_fraction: float = 0.2
 
     # Band selection
     adaptive_bands: bool = True
@@ -170,6 +171,8 @@ def build_parser() -> argparse.ArgumentParser:
     # ---- train ----
     train_p = sub.add_parser("train", parents=[shared], help="Train the pipeline.")
     train_p.add_argument("--n-folds", type=int, default=10)
+    train_p.add_argument("--val-fraction", type=float, default=0.2,
+                         help="Validation fraction per fold (default 0.2 = 80/20 split).")
     train_p.add_argument("--fold", type=int, default=None,
                          help="Run only this fold (0-indexed).")
     train_p.add_argument("--adaptive-bands", action="store_true", default=True)
@@ -250,7 +253,7 @@ def config_from_args(args: argparse.Namespace) -> Config:
 
     # mode-specific fields (all optional — Config has defaults)
     optional_fields = [
-        "n_folds", "fold", "adaptive_bands", "n_adaptive_bands", "freq_bands",
+        "n_folds", "fold", "val_fraction", "adaptive_bands", "n_adaptive_bands", "freq_bands",
         "band_range", "bandwidth", "band_step",
         "csp_components_per_band", "lambda_r", "euclidean_alignment", "riemannian_mean",
         "base_thresh", "adapt_inc", "decay",
