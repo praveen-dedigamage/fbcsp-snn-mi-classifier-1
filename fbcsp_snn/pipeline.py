@@ -405,21 +405,14 @@ def run_train(cfg: Config) -> None:
     subject_dir.mkdir(parents=True, exist_ok=True)
 
     # Determine which folds to run
-    # MOABB 2-session datasets: use StratifiedKFold on session-1 data.
-    # Single-session datasets: same, just fewer trials.
-    is_single_session = (cfg.source == "hdf5") or (
-        cfg.source == "moabb"
-        and cfg.moabb_dataset in ("PhysionetMI", "Cho2017")
+    # Split session-1 (X_train) only into train/val folds.
+    # X_test (session 2) is held out entirely and never touched by the splitter.
+    # StratifiedShuffleSplit with val_fraction=0.1 gives 90% training data per
+    # fold regardless of n_folds — more trials than KFold at 5 folds (80%) while
+    # keeping the same number of jobs.
+    splitter = StratifiedShuffleSplit(
+        n_splits=cfg.n_folds, test_size=0.1, random_state=42
     )
-
-    if is_single_session:
-        splitter = StratifiedShuffleSplit(
-            n_splits=cfg.n_folds, test_size=0.1, random_state=42
-        )
-    else:
-        splitter = StratifiedKFold(
-            n_splits=cfg.n_folds, shuffle=True, random_state=42
-        )
 
     fold_metrics: list[dict] = []
 
