@@ -407,11 +407,11 @@ def run_train(cfg: Config) -> None:
     # Determine which folds to run
     # Split session-1 (X_train) only into train/val folds.
     # X_test (session 2) is held out entirely and never touched by the splitter.
-    # StratifiedShuffleSplit with val_fraction=0.1 gives 90% training data per
-    # fold regardless of n_folds — more trials than KFold at 5 folds (80%) while
-    # keeping the same number of jobs.
-    splitter = StratifiedShuffleSplit(
-        n_splits=cfg.n_folds, test_size=0.1, random_state=42
+    # StratifiedKFold gives ~58 val trials per fold (20% of 288) — enough for
+    # reliable early stopping. StratifiedShuffleSplit(test_size=0.1) was tested
+    # but 29 val trials is too noisy for checkpoint selection (1 error = 3.4%).
+    splitter = StratifiedKFold(
+        n_splits=cfg.n_folds, shuffle=True, random_state=42
     )
 
     fold_metrics: list[dict] = []
