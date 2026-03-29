@@ -535,10 +535,10 @@ def run_infer(cfg: Config) -> None:
     # Load model
     model = SNNClassifier(
         n_input=n_input,
-        n_hidden=cfg.hidden_neurons,
+        n_hidden=params.get("hidden_neurons", cfg.hidden_neurons),
         n_classes=n_classes,
-        population_per_class=cfg.population_per_class,
-        beta=cfg.beta,
+        population_per_class=params.get("population_per_class", cfg.population_per_class),
+        beta=params.get("beta", cfg.beta),
         dropout_prob=0.0,   # no dropout at inference
     ).to(DEVICE)
     state = torch.load(fold_dir / "best_model.pt", map_location=DEVICE)
@@ -723,10 +723,10 @@ def run_aggregate(cfg: Config) -> None:
 
         model = SNNClassifier(
             n_input=n_input,
-            n_hidden=cfg.hidden_neurons,
+            n_hidden=params.get("hidden_neurons", cfg.hidden_neurons),
             n_classes=n_classes,
-            population_per_class=cfg.population_per_class,
-            beta=cfg.beta,
+            population_per_class=params.get("population_per_class", cfg.population_per_class),
+            beta=params.get("beta", cfg.beta),
             dropout_prob=0.0,
         ).to(DEVICE)
         state = torch.load(model_path, map_location=DEVICE)
