@@ -98,6 +98,7 @@ class Config:
     bandwidth: float = 4.0
     band_step: float = 2.0
     band_range: Tuple[float, float] = (4.0, 40.0)
+    min_fisher_fraction: float = 0.05
 
     # CSP
     csp_components_per_band: int = 4
@@ -184,6 +185,8 @@ def build_parser() -> argparse.ArgumentParser:
     train_p.add_argument("--band-range", type=_parse_band_range,
                          default=(4.0, 40.0),
                          help="Candidate band search range, e.g. '(4.0,30.0)'")
+    train_p.add_argument("--min-fisher-fraction", type=float, default=0.05,
+                         help="Min Fisher score as fraction of top band score (default 0.05).")
     train_p.add_argument("--bandwidth", type=float, default=4.0)
     train_p.add_argument("--band-step", type=float, default=2.0)
     train_p.add_argument("--csp-components-per-band", type=int, default=4)
@@ -254,7 +257,7 @@ def config_from_args(args: argparse.Namespace) -> Config:
     # mode-specific fields (all optional — Config has defaults)
     optional_fields = [
         "n_folds", "fold", "val_fraction", "adaptive_bands", "n_adaptive_bands", "freq_bands",
-        "band_range", "bandwidth", "band_step",
+        "band_range", "bandwidth", "band_step", "min_fisher_fraction",
         "csp_components_per_band", "lambda_r", "euclidean_alignment", "riemannian_mean",
         "base_thresh", "adapt_inc", "decay",
         "hidden_neurons", "population_per_class", "beta", "dropout_prob",

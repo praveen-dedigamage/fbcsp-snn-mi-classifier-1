@@ -182,6 +182,7 @@ def _run_single_fold(
             bandwidth=cfg.bandwidth,
             step=cfg.band_step,
             band_range=cfg.band_range,
+            min_fisher_fraction=cfg.min_fisher_fraction,
         )
     else:
         bands = cfg.freq_bands

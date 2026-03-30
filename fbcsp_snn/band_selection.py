@@ -38,6 +38,7 @@ def select_bands(
     bandwidth: float = 4.0,
     step: float = 2.0,
     band_range: Tuple[float, float] = (4.0, 40.0),
+    min_fisher_fraction: float = 0.05,
 ) -> Tuple[List[Tuple[float, float]], np.ndarray, np.ndarray]:
     """Select the best *n_bands* frequency bands from training data.
 
@@ -50,13 +51,18 @@ def select_bands(
     sfreq : float
         Sampling frequency in Hz.
     n_bands : int
-        Number of bands to select.
+        Maximum number of bands to select.
     bandwidth : float
         Width of each candidate band in Hz.
     step : float
         Step size between candidate band centres in Hz.
     band_range : Tuple[float, float]
         Frequency range ``(f_min, f_max)`` for candidate generation.
+    min_fisher_fraction : float
+        Minimum Fisher score as a fraction of the top candidate score.
+        Candidates below ``top_score * min_fisher_fraction`` are rejected,
+        preventing noise bands from being forced in when ``n_bands`` is large.
+        Default 0.05 (5 % of top score).
 
     Returns
     -------
@@ -77,7 +83,10 @@ def select_bands(
 
     scores = _score_candidates(candidates, fisher_freqs, fisher_curve)
 
-    selected = _greedy_select(candidates, scores, n_bands, bandwidth)
+    selected = _greedy_select(
+        candidates, scores, n_bands, bandwidth,
+        min_fisher_fraction=min_fisher_fraction,
+    )
 
     logger.info("Selected %d bands: %s", len(selected), selected)
     return selected, fisher_freqs, fisher_curve
@@ -247,11 +256,16 @@ def _greedy_select(
     n_bands: int,
     bandwidth: float,
     max_overlap: float = 0.5,
+    min_fisher_fraction: float = 0.05,
 ) -> List[Tuple[float, float]]:
-    """Greedy band selection with overlap constraint.
+    """Greedy band selection with overlap and Fisher score threshold constraints.
 
-    Sort candidates by descending score, add each if its maximum pairwise
-    overlap with already-selected bands does not exceed *max_overlap*.
+    Sort candidates by descending score, add each if:
+      (a) its maximum pairwise overlap with already-selected bands ≤ max_overlap, and
+      (b) its score ≥ top_score * min_fisher_fraction.
+
+    Constraint (b) prevents low-discriminability noise bands from being forced in
+    when n_bands is larger than the number of genuinely informative bands.
 
     Parameters
     ----------
@@ -260,11 +274,13 @@ def _greedy_select(
     scores : np.ndarray
         Score per candidate.
     n_bands : int
-        Number of bands to select.
+        Maximum number of bands to select.
     bandwidth : float
         Nominal band width for overlap normalisation.
     max_overlap : float
         Maximum allowed fractional overlap with any selected band.
+    min_fisher_fraction : float
+        Minimum score as a fraction of the top candidate score.
 
     Returns
     -------
@@ -272,9 +288,16 @@ def _greedy_select(
         Selected bands, ordered by score (highest first).
     """
     order = np.argsort(scores)[::-1]
+    score_threshold = scores[order[0]] * min_fisher_fraction
     selected: List[Tuple[float, float]] = []
 
     for idx in order:
+        if scores[idx] < score_threshold:
+            logger.info(
+                "Band selection: stopping early — score %.4f below threshold %.4f (%.0f%% of top)",
+                scores[idx], score_threshold, min_fisher_fraction * 100,
+            )
+            break
         candidate = candidates[idx]
         if all(
             _overlap_fraction(candidate, sel, bandwidth) <= max_overlap
@@ -286,8 +309,8 @@ def _greedy_select(
 
     if len(selected) < n_bands:
         logger.warning(
-            "Could only select %d bands (requested %d) under ≤%.0f%% overlap constraint.",
-            len(selected), n_bands, max_overlap * 100,
+            "Selected %d bands (requested %d) — remaining candidates below Fisher threshold.",
+            len(selected), n_bands,
         )
 
     return selected
