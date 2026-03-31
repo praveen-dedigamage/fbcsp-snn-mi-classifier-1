@@ -278,6 +278,10 @@ def _run_single_fold(
         device=DEVICE,
         fold_dir=fold_dir,
         log_every=max(1, cfg.epochs // 20),
+        lr_scheduler=cfg.lr_scheduler,
+        lr_min=cfg.lr_min,
+        lr_scheduler_patience=cfg.lr_scheduler_patience,
+        lr_scheduler_factor=cfg.lr_scheduler_factor,
     )
 
     # ---- Fold BN into Linear (deployment-ready model) ----
@@ -354,6 +358,10 @@ def _run_single_fold(
         "population_per_class": cfg.population_per_class,
         "beta":               cfg.beta,
         "use_bn":             cfg.use_bn,
+        "lr_scheduler":       cfg.lr_scheduler,
+        "lr_min":             cfg.lr_min,
+        "lr_scheduler_patience": cfg.lr_scheduler_patience,
+        "lr_scheduler_factor": cfg.lr_scheduler_factor,
         "feature_method":     cfg.feature_selection_method,
         "feature_percentile": cfg.feature_percentile,
         "best_val_acc_fp32":  round(result.best_val_acc, 6),
