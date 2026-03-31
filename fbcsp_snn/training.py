@@ -357,9 +357,9 @@ def train_fold(
                 fold_dir.mkdir(parents=True, exist_ok=True)
                 torch.save(best_state, fold_dir / "best_model.pt")
 
-        # LR scheduler step
+        # LR scheduler step — only after warmup so early exploration isn't cut short
         prev_lr = optimizer.param_groups[0]["lr"]
-        if scheduler is not None:
+        if scheduler is not None and epoch >= warmup:
             if lr_scheduler == "plateau":
                 scheduler.step(val_acc)
             else:
