@@ -78,6 +78,7 @@ python main.py train \
     --spiking-prob 0.7 \
     --feature-selection-method mibif \
     --feature-percentile 50.0 \
+    --no-use-bn \
     --results-dir Results \
     "$@"
 
