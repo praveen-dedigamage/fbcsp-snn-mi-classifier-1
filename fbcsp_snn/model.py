@@ -57,6 +57,11 @@ class SNNClassifier(nn.Module):
         LIF membrane potential decay factor (shared across both layers).
     dropout_prob : float
         Dropout probability applied after each linear layer.
+    use_bn : bool
+        If ``True`` (default), insert ``BatchNorm1d`` after each ``Linear``
+        layer.  BN is folded into the preceding Linear at deployment time via
+        :func:`~fbcsp_snn.quantization.fold_batchnorm`, so it adds no extra
+        operations on neuromorphic hardware.
 
     Attributes
     ----------
@@ -72,6 +77,7 @@ class SNNClassifier(nn.Module):
         population_per_class: int = 20,
         beta: float = 0.95,
         dropout_prob: float = 0.5,
+        use_bn: bool = True,
     ) -> None:
         super().__init__()
 
@@ -80,25 +86,28 @@ class SNNClassifier(nn.Module):
         self.n_classes = n_classes
         self.population_per_class = population_per_class
         self.n_output = n_classes * population_per_class
+        self.use_bn = use_bn
 
         spike_grad = surrogate.fast_sigmoid(slope=25)
 
-        # Layer 1: Linear → Dropout → LIF
+        # Layer 1: Linear → BN → Dropout → LIF
         self.fc1 = nn.Linear(n_input, n_hidden)
+        self.bn1 = nn.BatchNorm1d(n_hidden) if use_bn else nn.Identity()
         self.drop1 = nn.Dropout(p=dropout_prob)
         self.lif1 = snn.Leaky(beta=beta, spike_grad=spike_grad)
 
-        # Layer 2: Linear → Dropout → LIF
+        # Layer 2: Linear → BN → Dropout → LIF
         self.fc2 = nn.Linear(n_hidden, self.n_output)
+        self.bn2 = nn.BatchNorm1d(self.n_output) if use_bn else nn.Identity()
         self.drop2 = nn.Dropout(p=dropout_prob)
         self.lif2 = snn.Leaky(beta=beta, spike_grad=spike_grad)
 
         param_count = sum(p.numel() for p in self.parameters() if p.requires_grad)
         logger.info(
             "SNNClassifier — input: %d  hidden: %d  classes: %d  "
-            "pop/class: %d  output: %d  trainable params: %d",
+            "pop/class: %d  output: %d  use_bn: %s  trainable params: %d",
             n_input, n_hidden, n_classes, population_per_class,
-            self.n_output, param_count,
+            self.n_output, use_bn, param_count,
         )
 
     # ------------------------------------------------------------------
@@ -131,11 +140,11 @@ class SNNClassifier(nn.Module):
         mem_out_list: list[torch.Tensor] = []
 
         for t in range(T):
-            # Layer 1
-            cur1 = self.drop1(self.fc1(x[t]))
+            # Layer 1: Linear → BN → Dropout → LIF
+            cur1 = self.drop1(self.bn1(self.fc1(x[t])))
             spk1, mem1 = self.lif1(cur1, mem1)
-            # Layer 2
-            cur2 = self.drop2(self.fc2(spk1))
+            # Layer 2: Linear → BN → Dropout → LIF
+            cur2 = self.drop2(self.bn2(self.fc2(spk1)))
             spk2, mem2 = self.lif2(cur2, mem2)
 
             spk_out_list.append(spk2)

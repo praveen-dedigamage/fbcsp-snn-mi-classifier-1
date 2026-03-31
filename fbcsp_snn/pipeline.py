@@ -49,7 +49,7 @@ from fbcsp_snn.evaluation import compute_accuracy, compute_confusion_matrix
 from fbcsp_snn.mibif import MIBIFSelector
 from fbcsp_snn.model import SNNClassifier, maybe_compile
 from fbcsp_snn.preprocessing import PairwiseCSP, ZNormaliser, apply_filter_bank
-from fbcsp_snn.quantization import quantize_model, quantization_report
+from fbcsp_snn.quantization import fold_batchnorm, quantize_model, quantization_report
 from fbcsp_snn.training import evaluate_model, train_fold
 from fbcsp_snn.visualization import (
     plot_band_selection,
@@ -256,6 +256,7 @@ def _run_single_fold(
         population_per_class=cfg.population_per_class,
         beta=cfg.beta,
         dropout_prob=cfg.dropout_prob,
+        use_bn=cfg.use_bn,
     ).to(DEVICE))
 
     result = train_fold(
@@ -279,22 +280,25 @@ def _run_single_fold(
         log_every=max(1, cfg.epochs // 20),
     )
 
-    # ---- FP32 evaluate ----
-    val_acc_fp32,  val_preds_fp32  = evaluate_model(model, spikes_val, y_f_val_0,  DEVICE)
-    test_acc_fp32, test_preds_fp32 = evaluate_model(model, spikes_te,  y_test_0,   DEVICE)
+    # ---- Fold BN into Linear (deployment-ready model) ----
+    model_deploy = fold_batchnorm(model)
 
-    # ---- INT8 simulate + evaluate ----
-    model_int8 = quantize_model(model, bits=8)
+    # ---- FP32 evaluate (folded model = what gets deployed) ----
+    val_acc_fp32,  val_preds_fp32  = evaluate_model(model_deploy, spikes_val, y_f_val_0,  DEVICE)
+    test_acc_fp32, test_preds_fp32 = evaluate_model(model_deploy, spikes_te,  y_test_0,   DEVICE)
+
+    # ---- INT8 simulate + evaluate (quantise the folded model) ----
+    model_int8 = quantize_model(model_deploy, bits=8)
     val_acc_int8,  val_preds_int8  = evaluate_model(model_int8, spikes_val, y_f_val_0, DEVICE)
     test_acc_int8, test_preds_int8 = evaluate_model(model_int8, spikes_te,  y_test_0,  DEVICE)
 
     quantization_report(val_acc_fp32,  val_acc_int8,  label="val")
     quantization_report(test_acc_fp32, test_acc_int8, label="test")
 
-    # ---- Neuron traces (one test-set batch) ----
-    model.eval()
+    # ---- Neuron traces (one test-set batch, use folded model) ----
+    model_deploy.eval()
     with torch.no_grad():
-        spk_out_vis, mem_out_vis = model(spikes_te[:, :8, :].to(DEVICE))
+        spk_out_vis, mem_out_vis = model_deploy(spikes_te[:, :8, :].to(DEVICE))
     plot_neuron_traces(
         spk_out_vis, mem_out_vis,
         save_path=fold_dir / "neuron_traces.png",
@@ -305,7 +309,7 @@ def _run_single_fold(
 
     # ---- Weight histograms ----
     plot_weight_histograms(
-        model,
+        model_deploy,
         save_path=fold_dir / "weight_histograms.png",
         quantized_model=model_int8,
         title=f"Subject {cfg.subject_id} Fold {fold_idx} — Weight Distributions",
@@ -349,6 +353,7 @@ def _run_single_fold(
         "hidden_neurons":     cfg.hidden_neurons,
         "population_per_class": cfg.population_per_class,
         "beta":               cfg.beta,
+        "use_bn":             cfg.use_bn,
         "feature_method":     cfg.feature_selection_method,
         "feature_percentile": cfg.feature_percentile,
         "best_val_acc_fp32":  round(result.best_val_acc, 6),
@@ -541,6 +546,7 @@ def run_infer(cfg: Config) -> None:
         population_per_class=params.get("population_per_class", cfg.population_per_class),
         beta=params.get("beta", cfg.beta),
         dropout_prob=0.0,   # no dropout at inference
+        use_bn=params.get("use_bn", False),
     ).to(DEVICE)
     state = torch.load(fold_dir / "best_model.pt", map_location=DEVICE)
     model.load_state_dict(state)
@@ -729,6 +735,7 @@ def run_aggregate(cfg: Config) -> None:
             population_per_class=params.get("population_per_class", cfg.population_per_class),
             beta=params.get("beta", cfg.beta),
             dropout_prob=0.0,
+            use_bn=params.get("use_bn", False),
         ).to(DEVICE)
         state = torch.load(model_path, map_location=DEVICE)
         model.load_state_dict(state)
