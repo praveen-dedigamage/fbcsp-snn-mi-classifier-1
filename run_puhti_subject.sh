@@ -22,7 +22,7 @@
 #
 # Monitor:
 #   squeue -u $USER
-#   for F in $(seq 0 9); do echo "=== fold $F ===" && tail -3 logs/fbcsp_snn_S2_f${F}_*.out 2>/dev/null; done
+#   for F in $(seq 0 9); do echo "=== fold $F ===" && tail -3 logs/fbcsp_snn_S${1}_f${F}_*.out 2>/dev/null; done
 # ============================================================
 
 set -euo pipefail
@@ -63,8 +63,9 @@ python main.py train \
     --fold "${FOLD_ID}" \
     --n-folds 5 \
     --adaptive-bands \
-    --n-adaptive-bands 6 \
-    --csp-components-per-band 4 \
+    --n-adaptive-bands 12 \
+    --csp-components-per-band 8 \
+    --min-fisher-fraction 0.15 \
     --hidden-neurons 64 \
     --population-per-class 20 \
     --beta 0.95 \

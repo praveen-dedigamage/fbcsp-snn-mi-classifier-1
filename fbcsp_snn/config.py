@@ -91,17 +91,17 @@ class Config:
 
     # Band selection
     adaptive_bands: bool = True
-    n_adaptive_bands: int = 6
+    n_adaptive_bands: int = 12
     freq_bands: List[Tuple[float, float]] = field(
         default_factory=lambda: [(4, 8), (8, 14), (14, 30)]
     )
     bandwidth: float = 4.0
     band_step: float = 2.0
     band_range: Tuple[float, float] = (4.0, 40.0)
-    min_fisher_fraction: float = 0.05
+    min_fisher_fraction: float = 0.15
 
     # CSP
-    csp_components_per_band: int = 4
+    csp_components_per_band: int = 8
     lambda_r: float = 0.0001
     euclidean_alignment: bool = True
     riemannian_mean: bool = True

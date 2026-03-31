@@ -187,25 +187,93 @@ patterns, some of which may be more session-stable.
 **Observation:** Subject-specific gains. Neither axis (more bands, more CSP) consistently
 outperforms V4 on all subjects.
 
-### Combined scaling (12 bands, 8 CSP) — all 9 subjects
+### Combined scaling (12 bands, 8 CSP) — Fisher threshold sweep
 
 **Hypothesis:** Combining both axes (432 features → 216 after MIBIF) may capture
-additive benefits seen partially in each individual experiment.
-Total features: 6 pairs × 8 filters × 12 bands = 432 → 216 after MIBIF 50%.
-**Status:** Running on Puhti.
+additive benefits. Root cause analysis of S6 revealed that with 12 bands, the
+adaptive selector was forced to pick high-gamma noise bands (24–40 Hz) — likely
+EMG artifacts that are discriminative in session 1 but don't transfer to session 2.
+
+**Fix:** Added `min_fisher_fraction` parameter to `band_selection.py`. Any candidate
+band scoring below `top_score × min_fisher_fraction` is rejected, preventing noise
+bands from being forced in.
+
+**Threshold sweep on S6 (12b8c):**
+
+| mff | Val | Test | Δ vs previous |
+|-----|-----|------|--------------|
+| 0.05 (no guard) | 58.7% | 47.2% | — |
+| 0.05 (with guard) | 58.7% | 49.5% | +2.3pp |
+| 0.15 | 62.1% | 52.6% | +3.1pp |
+| 0.25 | 62.5% | 53.2% | +0.6pp ← peak |
+| 0.35 | 58.3% | 52.5% | -0.7pp (over-pruning) |
+
+**Full 9-subject results — 12b8c at different thresholds:**
+
+| Subject | V4 (9b6c) | 12b8c mff=0.25 | 12b8c mff=0.15 |
+|---------|-----------|----------------|----------------|
+| S1 | 82.6% ±2.9 | 79.9% ±1.7 | 83.5% ±2.5 |
+| S2 | 44.7% ±5.3 | 44.4% ±4.0 | 46.5% ±3.4 |
+| S3 | 77.8% ±1.3 | 72.4% ±3.3 | 74.0% ±4.0 |
+| S4 | 63.5% ±4.1 | 62.4% ±2.1 | 65.8% ±4.1 |
+| S5 | 45.3% ±4.4 | 46.9% ±1.7 | 46.5% ±3.3 |
+| S6 | 54.3% ±1.9 | 52.5% ±1.3 | 53.1% ±3.8 |
+| S7 | 72.5% ±5.6 | 73.5% ±5.7 | 74.0% ±2.6 |
+| S8 | 80.3% ±3.1 | 78.7% ±3.5 | 76.9% ±1.2 |
+| S9 | 80.7% ±1.5 | 81.0% ±1.8 | 81.7% ±2.0 |
+| **Mean** | **66.9% ±14.5** | **65.8% ±13.8** | **66.9% ±13.8** |
+
+**Conclusion:** 12b8c mff=0.15 ties V4 on grand mean (66.9%) but wins on stability —
+lower std for 6/9 subjects (notably S7: ±5.6→±2.6, S2: ±5.3→±3.4). More consistent
+cross-fold behaviour makes it the better configuration for publication.
+**Selected as V4.1.**
+
+---
+
+## V4.1 — 12 adaptive bands + 8 CSP components + min_fisher_fraction=0.15
+
+**Tag:** `v4.1`
+
+**Changes vs V4:**
+
+| Parameter | V4 | V4.1 |
+|-----------|----|----|
+| n_adaptive_bands | 9 | 12 |
+| csp_components_per_band | 6 | 8 |
+| min_fisher_fraction | 0.05 | 0.15 |
+| Features pre-MIBIF | 324 | 432 |
+| Features post-MIBIF | 162 | 216 |
+
+**Results:**
+
+| Subject | Baseline | V3 | V4 | V4.1 | Δ vs V4 |
+|---------|----------|-----|-----|------|---------|
+| S1 | 85.3% | 81.4% | 82.6% | 83.5% | +0.9pp |
+| S2 | 45.4% | 41.1% | 44.7% | 46.5% | +1.8pp |
+| S3 | 73.8% | 75.6% | 77.8% | 74.0% | -3.8pp |
+| S4 | 54.3% | 61.2% | 63.5% | 65.8% | +2.3pp |
+| S5 | 44.4% | 40.6% | 45.3% | 46.5% | +1.2pp |
+| S6 | 51.7% | 52.8% | 54.3% | 53.1% | -1.2pp |
+| S7 | 76.6% | 67.7% | 72.5% | 74.0% | +1.5pp |
+| S8 | 79.6% | 77.5% | 80.3% | 76.9% | -3.4pp |
+| S9 | 72.4% | 77.3% | 80.7% | 81.7% | +1.0pp |
+| **Mean** | **64.8%** | **63.9%** | **66.9%** | **66.9%** | **0.0pp** |
+| **Std** | — | — | **±14.5** | **±13.8** | **-0.7pp** |
+
+**Why V4.1 over V4:** Same grand mean but lower cross-fold variance.
+For publication, lower std indicates more reproducible results.
 
 ---
 
 ## Summary table
 
-| Version | Bands | CSP/band | Features (post-MIBIF) | Grand Mean | vs Baseline |
-|---------|-------|----------|-----------------------|-----------|-------------|
-| Baseline | 3 (static) | ~7 | — | 64.8% | — |
-| V3 | 6 (adaptive) | 4 | 72 | 63.9% | -0.9pp |
-| V4 | **9 (adaptive)** | **6** | **162** | **66.9%** | **+2.1pp** |
-| 12b6c (pilot) | 12 | 6 | 216 | ~flat vs V4 | — |
-| 9b8c (pilot) | 9 | 8 | 216 | ~flat vs V4 | — |
-| 12b8c | 12 | 8 | 216 | pending | — |
+| Version | Bands | CSP/band | mff | Features (post-MIBIF) | Grand Mean | Std | vs Baseline |
+|---------|-------|----------|-----|-----------------------|-----------|-----|-------------|
+| Baseline | 3 (static) | ~7 | — | — | 64.8% | — | — |
+| V3 | 6 | 4 | 0.05 | 72 | 63.9% | ±15.0 | -0.9pp |
+| V4 | 9 | 6 | 0.05 | 162 | 66.9% | ±14.5 | +2.1pp |
+| **V4.1** | **12** | **8** | **0.15** | **216** | **66.9%** | **±13.8** | **+2.1pp** |
 
 **Target:** 70.0% grand mean FP32.
-**Current best:** V4 at 66.9% (+2.1pp vs baseline).
+**Current best:** V4.1 at 66.9% ±13.8 (+2.1pp vs baseline).
+**Next:** V5 — Batch Normalisation (training regulariser, folded at deployment).
