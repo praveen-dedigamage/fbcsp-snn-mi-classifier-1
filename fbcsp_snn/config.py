@@ -126,7 +126,9 @@ class Config:
     early_stopping_patience: int = 100
     early_stopping_warmup: int = 100
     spiking_prob: float = 0.7
-    lr_scheduler: str = "plateau"
+    activity_reg: float = 0.01
+    target_spike_rate: float = 0.1
+    lr_scheduler: str = "none"
     lr_min: float = 1e-5
     lr_scheduler_patience: int = 30
     lr_scheduler_factor: float = 0.5
@@ -219,6 +221,8 @@ def build_parser() -> argparse.ArgumentParser:
     train_p.add_argument("--early-stopping-patience", type=int, default=100)
     train_p.add_argument("--early-stopping-warmup", type=int, default=100)
     train_p.add_argument("--spiking-prob", type=float, default=0.7)
+    train_p.add_argument("--activity-reg", type=float, default=0.01)
+    train_p.add_argument("--target-spike-rate", type=float, default=0.1)
     train_p.add_argument("--lr-scheduler", choices=["plateau", "cosine", "none"],
                          default="plateau")
     train_p.add_argument("--lr-min", type=float, default=1e-5)
@@ -277,6 +281,7 @@ def config_from_args(args: argparse.Namespace) -> Config:
         "hidden_neurons", "population_per_class", "beta", "dropout_prob", "use_bn", "surrogate_slope",
         "lr", "weight_decay", "epochs", "early_stopping_patience",
         "early_stopping_warmup", "spiking_prob",
+        "activity_reg", "target_spike_rate",
         "lr_scheduler", "lr_min", "lr_scheduler_patience", "lr_scheduler_factor",
         "feature_selection_method", "feature_percentile",
     ]

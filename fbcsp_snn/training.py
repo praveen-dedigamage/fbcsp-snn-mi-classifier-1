@@ -206,6 +206,8 @@ def train_fold(
     lr_min: float = 1e-5,
     lr_scheduler_patience: int = 30,
     lr_scheduler_factor: float = 0.5,
+    activity_reg: float = 0.0,
+    target_spike_rate: float = 0.1,
 ) -> FoldResult:
     """Train an SNN on one CV fold and return performance metrics.
 
@@ -250,6 +252,13 @@ def train_fold(
         Directory to save ``best_model.pt``.  Created if absent.
     log_every : int
         Log metrics every this many epochs.
+    activity_reg : float
+        Coefficient for hidden-layer firing-rate regularisation.  ``0.0``
+        disables it.  Adds ``activity_reg * (mean_hidden_rate - target)²``
+        to the loss, penalising deviation from *target_spike_rate*.
+    target_spike_rate : float
+        Target mean spike rate for the hidden layer (spikes per neuron per
+        timestep).  Typical range 0.05–0.2.
     lr_scheduler : str
         LR schedule type: ``"plateau"``, ``"cosine"``, or ``"none"``.
         ``"plateau"`` reduces LR by *lr_scheduler_factor* after
@@ -332,8 +341,11 @@ def train_fold(
             optimizer.zero_grad()
 
             with autocast(device_type=device.type, enabled=use_amp):
-                spk_out, _ = model(batch_spikes)
+                spk_out, _, spk_hidden = model(batch_spikes, return_hidden=True)
                 loss = van_rossum_loss(spk_out, target, tau=tau_vr)
+                if activity_reg > 0.0:
+                    mean_rate = spk_hidden.float().mean()
+                    loss = loss + activity_reg * (mean_rate - target_spike_rate) ** 2
 
             scaler.scale(loss).backward()
             scaler.step(optimizer)

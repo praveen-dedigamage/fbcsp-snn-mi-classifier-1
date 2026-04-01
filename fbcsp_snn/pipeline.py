@@ -283,6 +283,8 @@ def _run_single_fold(
         lr_min=cfg.lr_min,
         lr_scheduler_patience=cfg.lr_scheduler_patience,
         lr_scheduler_factor=cfg.lr_scheduler_factor,
+        activity_reg=cfg.activity_reg,
+        target_spike_rate=cfg.target_spike_rate,
     )
 
     # ---- Fold BN into Linear (deployment-ready model) ----
@@ -364,6 +366,8 @@ def _run_single_fold(
         "beta":               cfg.beta,
         "use_bn":             cfg.use_bn,
         "surrogate_slope":    cfg.surrogate_slope,
+        "activity_reg":       cfg.activity_reg,
+        "target_spike_rate":  cfg.target_spike_rate,
         "lr_scheduler":       cfg.lr_scheduler,
         "lr_min":             cfg.lr_min,
         "lr_scheduler_patience": cfg.lr_scheduler_patience,

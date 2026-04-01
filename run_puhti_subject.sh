@@ -80,7 +80,9 @@ python main.py train \
     --feature-percentile 50.0 \
     --no-use-bn \
     --lr-scheduler none \
-    --surrogate-slope 10 \
+    --surrogate-slope 25 \
+    --activity-reg 0.01 \
+    --target-spike-rate 0.1 \
     --results-dir Results \
     "$@"
 
