@@ -321,6 +321,10 @@ def _run_single_fold(
 
     # ---- Confusion matrices ----
     class_names = _class_names(cfg, n_classes)
+    cm_fp32 = compute_confusion_matrix(y_test_0, test_preds_fp32, n_classes=n_classes, normalize=False)
+    cm_int8 = compute_confusion_matrix(y_test_0, test_preds_int8, n_classes=n_classes, normalize=False)
+    np.save(fold_dir / "cm_fp32.npy", cm_fp32)
+    np.save(fold_dir / "cm_int8.npy", cm_int8)
     plot_confusion_matrix(
         y_test_0, test_preds_fp32, class_names,
         save_path=fold_dir / "confusion_fp32.png",
@@ -689,75 +693,22 @@ def run_aggregate(cfg: Config) -> None:
     )
 
     # ---- Aggregated confusion matrix ----
-    # Re-load test predictions by re-running inference on each fold's saved model.
-    # This is lightweight since we just decode; no retraining.
+    # Load pre-saved per-fold confusion matrices (written by run_train).
+    # Falls back to skipping the fold if the file is missing (old runs).
     class_names = _class_names(cfg, n_classes)
     cm_fp32_sum = np.zeros((n_classes, n_classes), dtype=float)
     cm_int8_sum = np.zeros((n_classes, n_classes), dtype=float)
 
-    _, _, X_test, y_test = _load_raw(cfg)
-    y_test_0 = y_test - 1
-    sfreq = _sfreq(cfg)
-
     for r in rows:
         fold_idx = r["fold"]
         fold_dir = subject_dir / f"fold_{fold_idx}"
-        params   = r
-
-        bands   = [tuple(b) for b in params["bands"]]
-        n_input = params["n_input_features"]
-
-        # Load preprocessing
-        try:
-            with open(fold_dir / "csp_filters.pkl", "rb") as f:
-                csp: PairwiseCSP = pickle.load(f)
-            with open(fold_dir / "znorm.pkl", "rb") as f:
-                znorm: ZNormaliser = pickle.load(f)
-        except FileNotFoundError:
-            logger.warning("Preprocessing pickle missing for fold %s — skip", fold_idx)
+        cm_fp32_path = fold_dir / "cm_fp32.npy"
+        cm_int8_path = fold_dir / "cm_int8.npy"
+        if not cm_fp32_path.exists() or not cm_int8_path.exists():
+            logger.warning("cm_*.npy missing for fold %s — skip (re-train to generate)", fold_idx)
             continue
-
-        mibif_path = fold_dir / "mibif.pkl"
-        mibif: Optional[MIBIFSelector] = None
-        if mibif_path.exists():
-            with open(mibif_path, "rb") as f:
-                mibif = pickle.load(f)
-
-        X_bands = apply_filter_bank(X_test, bands, sfreq, order=4)
-        proj    = csp.transform(X_bands)
-        X_concat = _concat_projections(proj)
-        X_norm  = znorm.transform(X_concat)
-        spikes  = _spikes_from_concat(X_norm, cfg)
-        if mibif is not None:
-            spikes = mibif.transform(spikes)
-
-        model_path = fold_dir / "best_model.pt"
-        if not model_path.exists():
-            logger.warning("best_model.pt missing for fold %s — skip", fold_idx)
-            continue
-
-        model = SNNClassifier(
-            n_input=n_input,
-            n_hidden=params.get("hidden_neurons", cfg.hidden_neurons),
-            n_classes=n_classes,
-            population_per_class=params.get("population_per_class", cfg.population_per_class),
-            beta=params.get("beta", cfg.beta),
-            dropout_prob=0.0,
-            use_bn=params.get("use_bn", False),
-        ).to(DEVICE)
-        state = torch.load(model_path, map_location=DEVICE)
-        model.load_state_dict(state)
-
-        _, preds_fp32 = evaluate_model(model, spikes, y_test_0, DEVICE)
-        cm_fp32_sum += compute_confusion_matrix(
-            y_test_0, preds_fp32, n_classes=n_classes, normalize=False
-        )
-
-        model_int8 = quantize_model(model, bits=8)
-        _, preds_int8 = evaluate_model(model_int8, spikes, y_test_0, DEVICE)
-        cm_int8_sum += compute_confusion_matrix(
-            y_test_0, preds_int8, n_classes=n_classes, normalize=False
-        )
+        cm_fp32_sum += np.load(cm_fp32_path)
+        cm_int8_sum += np.load(cm_int8_path)
 
     # Row-normalise the summed matrices
     def _row_norm(cm: np.ndarray) -> np.ndarray:
