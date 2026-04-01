@@ -81,7 +81,7 @@ python main.py train \
     --no-use-bn \
     --lr-scheduler none \
     --surrogate-slope 25 \
-    --activity-reg 0.01 \
+    --activity-reg 0.001 \
     --target-spike-rate 0.1 \
     --results-dir Results \
     "$@"
