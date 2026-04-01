@@ -78,6 +78,7 @@ class SNNClassifier(nn.Module):
         beta: float = 0.95,
         dropout_prob: float = 0.5,
         use_bn: bool = True,
+        surrogate_slope: float = 25.0,
     ) -> None:
         super().__init__()
 
@@ -87,8 +88,9 @@ class SNNClassifier(nn.Module):
         self.population_per_class = population_per_class
         self.n_output = n_classes * population_per_class
         self.use_bn = use_bn
+        self.surrogate_slope = surrogate_slope
 
-        spike_grad = surrogate.fast_sigmoid(slope=25)
+        spike_grad = surrogate.fast_sigmoid(slope=surrogate_slope)
 
         # Layer 1: Linear → BN → Dropout → LIF
         self.fc1 = nn.Linear(n_input, n_hidden)
@@ -105,9 +107,9 @@ class SNNClassifier(nn.Module):
         param_count = sum(p.numel() for p in self.parameters() if p.requires_grad)
         logger.info(
             "SNNClassifier — input: %d  hidden: %d  classes: %d  "
-            "pop/class: %d  output: %d  use_bn: %s  trainable params: %d",
+            "pop/class: %d  output: %d  use_bn: %s  surrogate_slope: %.1f  trainable params: %d",
             n_input, n_hidden, n_classes, population_per_class,
-            self.n_output, use_bn, param_count,
+            self.n_output, use_bn, surrogate_slope, param_count,
         )
 
     # ------------------------------------------------------------------

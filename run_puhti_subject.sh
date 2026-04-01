@@ -79,10 +79,8 @@ python main.py train \
     --feature-selection-method mibif \
     --feature-percentile 50.0 \
     --no-use-bn \
-    --lr-scheduler plateau \
-    --lr-min 1e-5 \
-    --lr-scheduler-patience 30 \
-    --lr-scheduler-factor 0.5 \
+    --lr-scheduler none \
+    --surrogate-slope 50 \
     --results-dir Results \
     "$@"
 

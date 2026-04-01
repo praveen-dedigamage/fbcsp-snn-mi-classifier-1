@@ -257,6 +257,7 @@ def _run_single_fold(
         beta=cfg.beta,
         dropout_prob=cfg.dropout_prob,
         use_bn=cfg.use_bn,
+        surrogate_slope=cfg.surrogate_slope,
     ).to(DEVICE))
 
     result = train_fold(
@@ -362,6 +363,7 @@ def _run_single_fold(
         "population_per_class": cfg.population_per_class,
         "beta":               cfg.beta,
         "use_bn":             cfg.use_bn,
+        "surrogate_slope":    cfg.surrogate_slope,
         "lr_scheduler":       cfg.lr_scheduler,
         "lr_min":             cfg.lr_min,
         "lr_scheduler_patience": cfg.lr_scheduler_patience,
@@ -559,6 +561,7 @@ def run_infer(cfg: Config) -> None:
         beta=params.get("beta", cfg.beta),
         dropout_prob=0.0,   # no dropout at inference
         use_bn=params.get("use_bn", False),
+        surrogate_slope=params.get("surrogate_slope", 25.0),
     ).to(DEVICE)
     state = torch.load(fold_dir / "best_model.pt", map_location=DEVICE)
     model.load_state_dict(state)

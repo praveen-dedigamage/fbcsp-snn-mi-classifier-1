@@ -117,6 +117,7 @@ class Config:
     beta: float = 0.95
     dropout_prob: float = 0.5
     use_bn: bool = True
+    surrogate_slope: float = 25.0
 
     # Training
     lr: float = 1e-3
@@ -211,6 +212,7 @@ def build_parser() -> argparse.ArgumentParser:
     train_p.add_argument("--dropout-prob", type=float, default=0.5)
     train_p.add_argument("--use-bn", action="store_true", default=True)
     train_p.add_argument("--no-use-bn", dest="use_bn", action="store_false")
+    train_p.add_argument("--surrogate-slope", type=float, default=25.0)
     train_p.add_argument("--lr", type=float, default=1e-3)
     train_p.add_argument("--weight-decay", type=float, default=0.1)
     train_p.add_argument("--epochs", type=int, default=1000)
@@ -272,7 +274,7 @@ def config_from_args(args: argparse.Namespace) -> Config:
         "band_range", "bandwidth", "band_step", "min_fisher_fraction",
         "csp_components_per_band", "lambda_r", "euclidean_alignment", "riemannian_mean",
         "base_thresh", "adapt_inc", "decay",
-        "hidden_neurons", "population_per_class", "beta", "dropout_prob", "use_bn",
+        "hidden_neurons", "population_per_class", "beta", "dropout_prob", "use_bn", "surrogate_slope",
         "lr", "weight_decay", "epochs", "early_stopping_patience",
         "early_stopping_warmup", "spiking_prob",
         "lr_scheduler", "lr_min", "lr_scheduler_patience", "lr_scheduler_factor",
