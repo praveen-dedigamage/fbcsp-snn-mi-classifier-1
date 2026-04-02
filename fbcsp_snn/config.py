@@ -113,6 +113,7 @@ class Config:
 
     # Model
     hidden_neurons: int = 64
+    hidden_neurons2: int = 64
     population_per_class: int = 20
     beta: float = 0.95
     dropout_prob: float = 0.5
@@ -209,6 +210,7 @@ def build_parser() -> argparse.ArgumentParser:
     train_p.add_argument("--adapt-inc", type=float, default=0.6)
     train_p.add_argument("--decay", type=float, default=0.95)
     train_p.add_argument("--hidden-neurons", type=int, default=64)
+    train_p.add_argument("--hidden-neurons2", type=int, default=64)
     train_p.add_argument("--population-per-class", type=int, default=20)
     train_p.add_argument("--beta", type=float, default=0.95)
     train_p.add_argument("--dropout-prob", type=float, default=0.5)
@@ -278,7 +280,7 @@ def config_from_args(args: argparse.Namespace) -> Config:
         "band_range", "bandwidth", "band_step", "min_fisher_fraction",
         "csp_components_per_band", "lambda_r", "euclidean_alignment", "riemannian_mean",
         "base_thresh", "adapt_inc", "decay",
-        "hidden_neurons", "population_per_class", "beta", "dropout_prob", "use_bn", "surrogate_slope",
+        "hidden_neurons", "hidden_neurons2", "population_per_class", "beta", "dropout_prob", "use_bn", "surrogate_slope",
         "lr", "weight_decay", "epochs", "early_stopping_patience",
         "early_stopping_warmup", "spiking_prob",
         "activity_reg", "target_spike_rate",

@@ -252,6 +252,7 @@ def _run_single_fold(
     model = maybe_compile(SNNClassifier(
         n_input=n_input,
         n_hidden=cfg.hidden_neurons,
+        n_hidden2=cfg.hidden_neurons2,
         n_classes=n_classes,
         population_per_class=cfg.population_per_class,
         beta=cfg.beta,
@@ -362,6 +363,7 @@ def _run_single_fold(
         "csp_m":              m,
         "lambda_r":           cfg.lambda_r,
         "hidden_neurons":     cfg.hidden_neurons,
+        "hidden_neurons2":    cfg.hidden_neurons2,
         "population_per_class": cfg.population_per_class,
         "beta":               cfg.beta,
         "use_bn":             cfg.use_bn,
@@ -560,6 +562,7 @@ def run_infer(cfg: Config) -> None:
     model = SNNClassifier(
         n_input=n_input,
         n_hidden=params.get("hidden_neurons", cfg.hidden_neurons),
+        n_hidden2=params.get("hidden_neurons2", params.get("hidden_neurons", cfg.hidden_neurons)),
         n_classes=n_classes,
         population_per_class=params.get("population_per_class", cfg.population_per_class),
         beta=params.get("beta", cfg.beta),

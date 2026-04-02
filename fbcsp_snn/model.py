@@ -40,7 +40,7 @@ logger: logging.Logger = setup_logger(__name__)
 
 
 class SNNClassifier(nn.Module):
-    """Two-layer LIF SNN with population-coded output.
+    """Three-layer LIF SNN with population-coded output.
 
     Parameters
     ----------
@@ -48,13 +48,15 @@ class SNNClassifier(nn.Module):
         Number of input features (= total CSP features after optional MIBIF
         selection).
     n_hidden : int
-        Hidden layer width.
+        First hidden layer width.
+    n_hidden2 : int
+        Second hidden layer width.
     n_classes : int
         Number of motor imagery classes.
     population_per_class : int
         Output neurons allocated per class.
     beta : float
-        LIF membrane potential decay factor (shared across both layers).
+        LIF membrane potential decay factor (shared across all layers).
     dropout_prob : float
         Dropout probability applied after each linear layer.
     use_bn : bool
@@ -73,6 +75,7 @@ class SNNClassifier(nn.Module):
         self,
         n_input: int,
         n_hidden: int = 64,
+        n_hidden2: int = 64,
         n_classes: int = 4,
         population_per_class: int = 20,
         beta: float = 0.95,
@@ -84,6 +87,7 @@ class SNNClassifier(nn.Module):
 
         self.n_input = n_input
         self.n_hidden = n_hidden
+        self.n_hidden2 = n_hidden2
         self.n_classes = n_classes
         self.population_per_class = population_per_class
         self.n_output = n_classes * population_per_class
@@ -99,16 +103,22 @@ class SNNClassifier(nn.Module):
         self.lif1 = snn.Leaky(beta=beta, spike_grad=spike_grad)
 
         # Layer 2: Linear → BN → Dropout → LIF
-        self.fc2 = nn.Linear(n_hidden, self.n_output)
-        self.bn2 = nn.BatchNorm1d(self.n_output) if use_bn else nn.Identity()
+        self.fc2 = nn.Linear(n_hidden, n_hidden2)
+        self.bn2 = nn.BatchNorm1d(n_hidden2) if use_bn else nn.Identity()
         self.drop2 = nn.Dropout(p=dropout_prob)
         self.lif2 = snn.Leaky(beta=beta, spike_grad=spike_grad)
 
+        # Layer 3: Linear → BN → Dropout → LIF
+        self.fc3 = nn.Linear(n_hidden2, self.n_output)
+        self.bn3 = nn.BatchNorm1d(self.n_output) if use_bn else nn.Identity()
+        self.drop3 = nn.Dropout(p=dropout_prob)
+        self.lif3 = snn.Leaky(beta=beta, spike_grad=spike_grad)
+
         param_count = sum(p.numel() for p in self.parameters() if p.requires_grad)
         logger.info(
-            "SNNClassifier — input: %d  hidden: %d  classes: %d  "
+            "SNNClassifier — input: %d  hidden: %d  hidden2: %d  classes: %d  "
             "pop/class: %d  output: %d  use_bn: %s  surrogate_slope: %.1f  trainable params: %d",
-            n_input, n_hidden, n_classes, population_per_class,
+            n_input, n_hidden, n_hidden2, n_classes, population_per_class,
             self.n_output, use_bn, surrogate_slope, param_count,
         )
 
@@ -143,6 +153,7 @@ class SNNClassifier(nn.Module):
         T = x.shape[0]
         mem1 = self.lif1.init_leaky()
         mem2 = self.lif2.init_leaky()
+        mem3 = self.lif3.init_leaky()
 
         spk_out_list: list[torch.Tensor] = []
         mem_out_list: list[torch.Tensor] = []
@@ -155,9 +166,12 @@ class SNNClassifier(nn.Module):
             # Layer 2: Linear → BN → Dropout → LIF
             cur2 = self.drop2(self.bn2(self.fc2(spk1)))
             spk2, mem2 = self.lif2(cur2, mem2)
+            # Layer 3: Linear → BN → Dropout → LIF
+            cur3 = self.drop3(self.bn3(self.fc3(spk2)))
+            spk3, mem3 = self.lif3(cur3, mem3)
 
-            spk_out_list.append(spk2)
-            mem_out_list.append(mem2)
+            spk_out_list.append(spk3)
+            mem_out_list.append(mem3)
             if return_hidden:
                 spk_hidden_list.append(spk1)
 

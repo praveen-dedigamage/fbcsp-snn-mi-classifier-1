@@ -188,7 +188,7 @@ def fold_batchnorm(model: SNNClassifier) -> SNNClassifier:
     model_f = copy.deepcopy(model)
     model_f.eval()
 
-    for linear_name, bn_name in [("fc1", "bn1"), ("fc2", "bn2")]:
+    for linear_name, bn_name in [("fc1", "bn1"), ("fc2", "bn2"), ("fc3", "bn3")]:
         linear = getattr(model_f, linear_name)
         bn = getattr(model_f, bn_name)
 

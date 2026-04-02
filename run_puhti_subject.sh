@@ -81,8 +81,9 @@ python main.py train \
     --no-use-bn \
     --lr-scheduler none \
     --surrogate-slope 25 \
-    --activity-reg 0.001 \
-    --target-spike-rate 0.1 \
+    --activity-reg 0.0 \
+    --hidden-neurons 64 \
+    --hidden-neurons2 64 \
     --results-dir Results \
     "$@"
 
