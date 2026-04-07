@@ -5,22 +5,25 @@
 #SBATCH --cpus-per-task=2
 #SBATCH --mem=8G
 #SBATCH --time=00:20:00
-#SBATCH --array=1-9                    # one task per subject
-#SBATCH --output=logs/fbcsp_agg_S%a_%j.out
-#SBATCH --error=logs/fbcsp_agg_S%a_%j.err
+#SBATCH --output=logs/fbcsp_agg_S%x_%j.out
+#SBATCH --error=logs/fbcsp_agg_S%x_%j.err
 
 # ============================================================
-# FBCSP-SNN — Per-subject aggregation (array job)
-# Each task reads fold JSONs for one subject and writes
-# summary.csv + confusion matrix plots.
-#
-# Runs automatically after the training array via submit_puhti.sh
+# FBCSP-SNN — Per-subject aggregation
+# SUBJECT_ID is injected by submit_puhti.sh via --export.
+# Dependency is set to only the fold tasks for this subject,
+# so each subject aggregates as soon as its folds complete.
 # ============================================================
 
 set -euo pipefail
 
-SUBJECT_ID=${SLURM_ARRAY_TASK_ID}
 PROJECT_DIR=/scratch/project_2003397/praveen/fbcsp-snn-mi-classifier-1
+
+# SUBJECT_ID must be passed via sbatch --export=ALL,SUBJECT_ID=N
+if [ -z "${SUBJECT_ID:-}" ]; then
+    echo "ERROR: SUBJECT_ID not set. Use sbatch --export=ALL,SUBJECT_ID=N" >&2
+    exit 1
+fi
 
 # Read N_FOLDS from the training array script — single source of truth
 N_FOLDS=$(grep '^N_FOLDS=' "${PROJECT_DIR}/run_puhti_array.sh" | cut -d= -f2)
