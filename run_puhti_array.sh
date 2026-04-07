@@ -5,14 +5,18 @@
 #SBATCH --gres=gpu:v100:1
 #SBATCH --cpus-per-task=4              # 4 CPU threads for data loading / scipy
 #SBATCH --mem=32G
-#SBATCH --time=72:00:00
-#SBATCH --array=1-9                    # one task per BCI-IV-2a subject
+#SBATCH --time=2:00:00
+#SBATCH --array=1-45                   # 9 subjects × 5 folds = 45 tasks
 #SBATCH --output=logs/fbcsp_snn_S%a_%j.out
 #SBATCH --error=logs/fbcsp_snn_S%a_%j.err
 
 # ============================================================
-# FBCSP-SNN — CSC Puhti SLURM array job
-# Each task trains one subject (SLURM_ARRAY_TASK_ID = subject ID)
+# FBCSP-SNN — CSC Puhti SLURM array job  (V6.4)
+# Array index encodes both subject and fold:
+#   task 1-5  → subject 1, folds 0-4
+#   task 6-10 → subject 2, folds 0-4
+#   ...
+#   task 41-45 → subject 9, folds 0-4
 #
 # Submit:
 #   cd /scratch/project_2003397/praveen/fbcsp-snn-mi-classifier-1
@@ -22,19 +26,29 @@
 # Monitor:
 #   squeue -u $USER
 #   sacct -j <JOBID> --format=JobID,State,Elapsed,MaxRSS
+#
+# After all 45 tasks complete, aggregate:
+#   sbatch --dependency=afterok:<ARRAY_JOBID> run_puhti_aggregate.sh
 # ============================================================
 
 set -euo pipefail
 
-SUBJECT_ID=${SLURM_ARRAY_TASK_ID}
+N_FOLDS=5
+TASK_ID=${SLURM_ARRAY_TASK_ID}
+
+# Derive 1-indexed subject and 0-indexed fold from task ID
+SUBJECT_ID=$(( (TASK_ID - 1) / N_FOLDS + 1 ))
+FOLD_IDX=$(( (TASK_ID - 1) % N_FOLDS ))
+
 PROJECT_DIR=/scratch/project_2003397/praveen/fbcsp-snn-mi-classifier-1
 
 echo "=============================================="
-echo "  FBCSP-SNN  Subject ${SUBJECT_ID}"
-echo "  Node:   $(hostname)"
-echo "  GPU:    $(nvidia-smi --query-gpu=name --format=csv,noheader)"
-echo "  Start:  $(date)"
-echo "  Dir:    ${PROJECT_DIR}"
+echo "  FBCSP-SNN  V6.4"
+echo "  Task:    ${TASK_ID}  →  Subject ${SUBJECT_ID}, Fold ${FOLD_IDX}"
+echo "  Node:    $(hostname)"
+echo "  GPU:     $(nvidia-smi --query-gpu=name --format=csv,noheader)"
+echo "  Start:   $(date)"
+echo "  Dir:     ${PROJECT_DIR}"
 echo "=============================================="
 
 # ---- Environment ----------------------------------------------------------
@@ -48,47 +62,38 @@ export MNE_DATA=/scratch/project_2003397/praveen/mne_data
 
 cd "${PROJECT_DIR}"
 
-# ---- Training -------------------------------------------------------------
+# ---- Training (single fold) -----------------------------------------------
 python main.py train \
     --source moabb \
     --moabb-dataset BNCI2014_001 \
     --subject-id "${SUBJECT_ID}" \
+    --fold "${FOLD_IDX}" \
+    --n-folds "${N_FOLDS}" \
     --adaptive-bands \
-    --n-adaptive-bands 6 \
-    --csp-components-per-band 4 \
+    --n-adaptive-bands 12 \
+    --min-fisher-fraction 0.15 \
+    --csp-components-per-band 8 \
     --hidden-neurons 64 \
+    --hidden-neurons2 64 \
     --population-per-class 20 \
     --beta 0.95 \
     --dropout-prob 0.5 \
+    --surrogate-slope 25.0 \
+    --activity-reg 0.01 \
+    --lr-scheduler plateau \
+    --lr 1e-3 \
+    --weight-decay 0.1 \
     --epochs 1000 \
     --early-stopping-patience 100 \
     --early-stopping-warmup 100 \
-    --lr 1e-3 \
-    --weight-decay 0.1 \
     --spiking-prob 0.7 \
     --feature-selection-method mibif \
     --feature-percentile 50.0 \
-    --n-folds 10 \
     --results-dir Results
 
 EXIT_CODE=$?
 
 echo ""
-echo "Training finished with exit code ${EXIT_CODE}"
+echo "Fold ${FOLD_IDX} finished with exit code ${EXIT_CODE}"
 echo "End: $(date)"
 exit ${EXIT_CODE}
-
-# ============================================================
-# After all 9 array tasks complete, run aggregation + analysis:
-#
-#   cd /scratch/project_2003397/praveen/fbcsp-snn-mi-classifier-1
-#   source .venv/bin/activate
-#   for S in 1 2 3 4 5 6 7 8 9; do
-#       python main.py aggregate --subject-id $S --n-folds 10
-#   done
-#   python analyze_results.py --results-dir Results --subjects 1 2 3 4 5 6 7 8 9
-#
-# Or submit as a dependent job (runs automatically after all subjects finish):
-#
-#   sbatch --dependency=afterok:<ARRAY_JOBID> run_puhti_aggregate.sh
-# ============================================================
