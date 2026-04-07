@@ -75,7 +75,7 @@ python main.py train \
     --adaptive-bands \
     --n-adaptive-bands 12 \
     --min-fisher-fraction 0.15 \
-    --csp-components-per-band 8 \
+    --csp-components-per-band 22 \
     --hidden-neurons 64 \
     --population-per-class 20 \
     --beta 0.95 \
