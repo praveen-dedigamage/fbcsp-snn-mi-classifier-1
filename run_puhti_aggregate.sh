@@ -55,5 +55,50 @@ python analyze_results.py \
     --subjects 1 2 3 4 5 6 7 8 9
 
 echo ""
+echo "=============================================="
+echo "  RESULTS SUMMARY"
+echo "=============================================="
+python - <<'PYEOF'
+import csv, pathlib, statistics
+
+results_dir = pathlib.Path("Results")
+subjects = list(range(1, 10))
+
+rows = []
+fp32_all = []
+for s in subjects:
+    csv_path = results_dir / f"Subject_{s}" / "summary.csv"
+    if not csv_path.exists():
+        print(f"  S{s}: missing")
+        continue
+    with open(csv_path, newline="") as f:
+        folds = [r for r in csv.DictReader(f)
+                 if r.get("fold", "").strip().lower() not in ("", "mean")]
+    vals = [float(r["test_fp32_acc"]) * 100 for r in folds if r.get("test_fp32_acc")]
+    if not vals:
+        print(f"  S{s}: no data")
+        continue
+    mean = statistics.mean(vals)
+    std  = statistics.stdev(vals) if len(vals) > 1 else 0.0
+    fp32_all.extend(vals)
+    rows.append((s, mean, std, len(vals)))
+
+print(f"  {'Subject':<10} {'Mean FP32':>10} {'Std':>8} {'Folds':>6}")
+print(f"  {'-'*38}")
+for s, mean, std, n in rows:
+    print(f"  S{s:<9} {mean:>9.1f}%  {std:>6.1f}  {n:>5}")
+print(f"  {'-'*38}")
+if fp32_all:
+    grand_mean = statistics.mean(fp32_all)
+    grand_std  = statistics.stdev(fp32_all) if len(fp32_all) > 1 else 0.0
+    print(f"  {'Mean':<10} {grand_mean:>9.1f}%  {grand_std:>6.1f}")
+    print()
+    target = 70.0
+    gap = target - grand_mean
+    status = "TARGET MET" if gap <= 0 else f"{gap:.1f}pp below target (70%)"
+    print(f"  Status: {status}")
+PYEOF
+
+echo ""
 echo "Aggregation complete. Results in ${PROJECT_DIR}/Results/"
 echo "End: $(date)"
