@@ -1,15 +1,15 @@
 #!/bin/bash
 # ============================================================
-# FBCSP-SNN — One-shot submit: array training + auto-aggregate
+# FBCSP-SNN — One-shot submit: train → aggregate → analyze
 #
 # Usage:
 #   cd /scratch/project_2003397/praveen/fbcsp-snn-mi-classifier-1
 #   bash submit_puhti.sh
 #
-# This script:
-#   1. Submits the 45-task array job (9 subjects × 5 folds)
-#   2. Submits the aggregate job with afterok dependency —
-#      it runs automatically once ALL 45 tasks succeed
+# Pipeline:
+#   1. Training array  (45 tasks: 9 subjects × 5 folds, parallel)
+#   2. Aggregate array (9 tasks:  one per subject, parallel, afterok train)
+#   3. Analyze job     (1 task:   cross-subject summary, afterok all agg)
 # ============================================================
 
 set -euo pipefail
@@ -42,24 +42,31 @@ done
 [ "${REMOVED}" -eq 0 ] && echo "  Nothing to remove." || echo "  Removed ${REMOVED} director(ies)."
 echo ""
 
-# Submit array job and capture job ID
-ARRAY_OUTPUT=$(sbatch run_puhti_array.sh)
-ARRAY_JOBID=$(echo "${ARRAY_OUTPUT}" | awk '{print $4}')
+# --- Stage 1: Training array (45 tasks) ------------------------------------
+TRAIN_OUTPUT=$(sbatch run_puhti_array.sh)
+TRAIN_JOBID=$(echo "${TRAIN_OUTPUT}" | awk '{print $4}')
+echo "${TRAIN_OUTPUT}"
+echo ""
 
-echo "${ARRAY_OUTPUT}"
-echo "Array job ID: ${ARRAY_JOBID}"
-
-# Submit aggregate job as dependent
-AGG_OUTPUT=$(sbatch --dependency=afterok:${ARRAY_JOBID} run_puhti_aggregate.sh)
+# --- Stage 2: Aggregate array (9 tasks, one per subject) -------------------
+AGG_OUTPUT=$(sbatch --dependency=afterok:${TRAIN_JOBID} run_puhti_aggregate.sh)
 AGG_JOBID=$(echo "${AGG_OUTPUT}" | awk '{print $4}')
-
 echo "${AGG_OUTPUT}"
-echo "Aggregate job ID: ${AGG_JOBID}"
+echo ""
 
+# --- Stage 3: Cross-subject analysis (1 task) ------------------------------
+ANALYZE_OUTPUT=$(sbatch --dependency=afterok:${AGG_JOBID} run_puhti_analyze.sh)
+ANALYZE_JOBID=$(echo "${ANALYZE_OUTPUT}" | awk '{print $4}')
+echo "${ANALYZE_OUTPUT}"
 echo ""
-echo "All jobs submitted. Monitor with:"
-echo "  squeue -u \$USER"
-echo "  sacct -j ${ARRAY_JOBID} --format=JobID,State,Elapsed,MaxRSS"
+
+echo "=============================================="
+echo "  All jobs submitted"
+echo "  Train:    ${TRAIN_JOBID}   (45 tasks)"
+echo "  Aggregate:${AGG_JOBID}    (9 tasks, after train)"
+echo "  Analyze:  ${ANALYZE_JOBID}    (1 task,  after aggregate)"
 echo ""
-echo "Aggregate (job ${AGG_JOBID}) will run automatically when all 45 tasks succeed."
-echo "Results will be in: Results/"
+echo "  Monitor:  squeue -u \$USER"
+echo "  Results will appear in: Results/"
+echo "  Final summary in: logs/fbcsp_analyze_${ANALYZE_JOBID}.out"
+echo "=============================================="
