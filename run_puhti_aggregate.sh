@@ -4,7 +4,7 @@
 #SBATCH --partition=small
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=16G
-#SBATCH --time=00:30:00
+#SBATCH --time=01:00:00
 #SBATCH --output=logs/fbcsp_snn_aggregate_%j.out
 #SBATCH --error=logs/fbcsp_snn_aggregate_%j.err
 
