@@ -62,7 +62,10 @@ export MNE_DATA=/scratch/project_2003397/praveen/mne_data
 
 cd "${PROJECT_DIR}"
 
-# ---- Training (single fold) -----------------------------------------------
+# ---- Training (single fold) — V4.1 proven configuration ------------------
+# V6 features (activity_reg, 3-layer SNN, LR scheduler) are disabled here.
+# They collapsed accuracy to ~25% (chance) when combined. Add back one at a
+# time only after confirming V4.1 baseline is reproduced.
 python main.py train \
     --source moabb \
     --moabb-dataset BNCI2014_001 \
@@ -74,13 +77,9 @@ python main.py train \
     --min-fisher-fraction 0.15 \
     --csp-components-per-band 8 \
     --hidden-neurons 64 \
-    --hidden-neurons2 64 \
     --population-per-class 20 \
     --beta 0.95 \
     --dropout-prob 0.5 \
-    --surrogate-slope 25.0 \
-    --activity-reg 0.01 \
-    --lr-scheduler plateau \
     --lr 1e-3 \
     --weight-decay 0.1 \
     --epochs 1000 \
