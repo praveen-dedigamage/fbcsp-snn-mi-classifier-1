@@ -14,8 +14,25 @@
 
 set -euo pipefail
 
+N_FOLDS=5
+
 cd "$(dirname "$0")"
 mkdir -p logs
+
+# Remove fold directories beyond N_FOLDS to avoid stale results from previous runs
+echo "Cleaning up old fold directories (fold_${N_FOLDS} and above)..."
+for S in $(seq 1 9); do
+    for F in Results/Subject_${S}/fold_*/; do
+        [ -d "${F}" ] || continue
+        FOLD_NUM=$(basename "${F}" | sed 's/fold_//')
+        if [ "${FOLD_NUM}" -ge "${N_FOLDS}" ]; then
+            echo "  Removing ${F}"
+            rm -rf "${F}"
+        fi
+    done
+done
+echo "Cleanup done."
+echo ""
 
 # Submit array job and capture job ID
 ARRAY_OUTPUT=$(sbatch run_puhti_array.sh)
