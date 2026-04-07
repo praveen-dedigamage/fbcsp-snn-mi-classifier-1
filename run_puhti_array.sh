@@ -5,7 +5,7 @@
 #SBATCH --gres=gpu:v100:1
 #SBATCH --cpus-per-task=4              # 4 CPU threads for data loading / scipy
 #SBATCH --mem=32G
-#SBATCH --time=6:00:00
+#SBATCH --time=2:00:00
 #SBATCH --array=1-45                   # 9 subjects × 5 folds = 45 tasks
 #SBATCH --output=logs/fbcsp_snn_S%a_%j.out
 #SBATCH --error=logs/fbcsp_snn_S%a_%j.err
@@ -75,7 +75,7 @@ python main.py train \
     --adaptive-bands \
     --n-adaptive-bands 12 \
     --min-fisher-fraction 0.15 \
-    --csp-components-per-band 22 \
+    --csp-components-per-band 8 \
     --hidden-neurons 64 \
     --population-per-class 20 \
     --beta 0.95 \
