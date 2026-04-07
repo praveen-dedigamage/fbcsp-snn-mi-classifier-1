@@ -40,7 +40,7 @@ logger: logging.Logger = setup_logger(__name__)
 
 
 class SNNClassifier(nn.Module):
-    """Three-layer LIF SNN with population-coded output.
+    """Two-layer LIF SNN with population-coded output.
 
     Parameters
     ----------
@@ -48,22 +48,15 @@ class SNNClassifier(nn.Module):
         Number of input features (= total CSP features after optional MIBIF
         selection).
     n_hidden : int
-        First hidden layer width.
-    n_hidden2 : int
-        Second hidden layer width.
+        Hidden layer width.
     n_classes : int
         Number of motor imagery classes.
     population_per_class : int
         Output neurons allocated per class.
     beta : float
-        LIF membrane potential decay factor (shared across all layers).
+        LIF membrane potential decay factor (shared across both layers).
     dropout_prob : float
         Dropout probability applied after each linear layer.
-    use_bn : bool
-        If ``True`` (default), insert ``BatchNorm1d`` after each ``Linear``
-        layer.  BN is folded into the preceding Linear at deployment time via
-        :func:`~fbcsp_snn.quantization.fold_batchnorm`, so it adds no extra
-        operations on neuromorphic hardware.
 
     Attributes
     ----------
@@ -75,51 +68,37 @@ class SNNClassifier(nn.Module):
         self,
         n_input: int,
         n_hidden: int = 64,
-        n_hidden2: int = 64,
         n_classes: int = 4,
         population_per_class: int = 20,
         beta: float = 0.95,
         dropout_prob: float = 0.5,
-        use_bn: bool = True,
-        surrogate_slope: float = 25.0,
     ) -> None:
         super().__init__()
 
         self.n_input = n_input
         self.n_hidden = n_hidden
-        self.n_hidden2 = n_hidden2
         self.n_classes = n_classes
         self.population_per_class = population_per_class
         self.n_output = n_classes * population_per_class
-        self.use_bn = use_bn
-        self.surrogate_slope = surrogate_slope
 
-        spike_grad = surrogate.fast_sigmoid(slope=surrogate_slope)
+        spike_grad = surrogate.fast_sigmoid(slope=25)
 
-        # Layer 1: Linear → BN → Dropout → LIF
+        # Layer 1: Linear → Dropout → LIF
         self.fc1 = nn.Linear(n_input, n_hidden)
-        self.bn1 = nn.BatchNorm1d(n_hidden) if use_bn else nn.Identity()
         self.drop1 = nn.Dropout(p=dropout_prob)
         self.lif1 = snn.Leaky(beta=beta, spike_grad=spike_grad)
 
-        # Layer 2: Linear → BN → Dropout → LIF
-        self.fc2 = nn.Linear(n_hidden, n_hidden2)
-        self.bn2 = nn.BatchNorm1d(n_hidden2) if use_bn else nn.Identity()
+        # Layer 2: Linear → Dropout → LIF
+        self.fc2 = nn.Linear(n_hidden, self.n_output)
         self.drop2 = nn.Dropout(p=dropout_prob)
         self.lif2 = snn.Leaky(beta=beta, spike_grad=spike_grad)
 
-        # Layer 3: Linear → BN → Dropout → LIF
-        self.fc3 = nn.Linear(n_hidden2, self.n_output)
-        self.bn3 = nn.BatchNorm1d(self.n_output) if use_bn else nn.Identity()
-        self.drop3 = nn.Dropout(p=dropout_prob)
-        self.lif3 = snn.Leaky(beta=beta, spike_grad=spike_grad)
-
         param_count = sum(p.numel() for p in self.parameters() if p.requires_grad)
         logger.info(
-            "SNNClassifier — input: %d  hidden: %d  hidden2: %d  classes: %d  "
-            "pop/class: %d  output: %d  use_bn: %s  surrogate_slope: %.1f  trainable params: %d",
-            n_input, n_hidden, n_hidden2, n_classes, population_per_class,
-            self.n_output, use_bn, surrogate_slope, param_count,
+            "SNNClassifier — input: %d  hidden: %d  classes: %d  "
+            "pop/class: %d  output: %d  trainable params: %d",
+            n_input, n_hidden, n_classes, population_per_class,
+            self.n_output, param_count,
         )
 
     # ------------------------------------------------------------------
@@ -129,17 +108,13 @@ class SNNClassifier(nn.Module):
     def forward(
         self,
         x: torch.Tensor,
-        return_hidden: bool = False,
-    ) -> Tuple[torch.Tensor, ...]:
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         """Run SNN simulation over all timesteps.
 
         Parameters
         ----------
         x : torch.Tensor
             Input spike tensor, shape ``(T, batch, n_input)``.
-        return_hidden : bool
-            If ``True``, also return hidden layer spike trains as a third
-            element (used for activity regularisation during training).
 
         Returns
         -------
@@ -147,38 +122,27 @@ class SNNClassifier(nn.Module):
             Output spike trains, shape ``(T, batch, n_output)``.
         mem_out : torch.Tensor
             Output membrane potential traces, shape ``(T, batch, n_output)``.
-        spk_hidden : torch.Tensor  *(only when return_hidden=True)*
-            Hidden layer spike trains, shape ``(T, batch, n_hidden)``.
         """
         T = x.shape[0]
         mem1 = self.lif1.init_leaky()
         mem2 = self.lif2.init_leaky()
-        mem3 = self.lif3.init_leaky()
 
         spk_out_list: list[torch.Tensor] = []
         mem_out_list: list[torch.Tensor] = []
-        spk_hidden_list: list[torch.Tensor] = []
 
         for t in range(T):
-            # Layer 1: Linear → BN → Dropout → LIF
-            cur1 = self.drop1(self.bn1(self.fc1(x[t])))
+            # Layer 1
+            cur1 = self.drop1(self.fc1(x[t]))
             spk1, mem1 = self.lif1(cur1, mem1)
-            # Layer 2: Linear → BN → Dropout → LIF
-            cur2 = self.drop2(self.bn2(self.fc2(spk1)))
+            # Layer 2
+            cur2 = self.drop2(self.fc2(spk1))
             spk2, mem2 = self.lif2(cur2, mem2)
-            # Layer 3: Linear → BN → Dropout → LIF
-            cur3 = self.drop3(self.bn3(self.fc3(spk2)))
-            spk3, mem3 = self.lif3(cur3, mem3)
 
-            spk_out_list.append(spk3)
-            mem_out_list.append(mem3)
-            if return_hidden:
-                spk_hidden_list.append(spk1)
+            spk_out_list.append(spk2)
+            mem_out_list.append(mem2)
 
         spk_out = torch.stack(spk_out_list, dim=0)   # (T, batch, n_output)
         mem_out = torch.stack(mem_out_list, dim=0)   # (T, batch, n_output)
-        if return_hidden:
-            return spk_out, mem_out, torch.stack(spk_hidden_list, dim=0)
         return spk_out, mem_out
 
     # ------------------------------------------------------------------

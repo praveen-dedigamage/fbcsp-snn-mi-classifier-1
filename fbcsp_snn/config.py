@@ -113,12 +113,9 @@ class Config:
 
     # Model
     hidden_neurons: int = 64
-    hidden_neurons2: int = 64
     population_per_class: int = 20
     beta: float = 0.95
     dropout_prob: float = 0.5
-    use_bn: bool = True
-    surrogate_slope: float = 25.0
 
     # Training
     lr: float = 1e-3
@@ -127,12 +124,6 @@ class Config:
     early_stopping_patience: int = 100
     early_stopping_warmup: int = 100
     spiking_prob: float = 0.7
-    activity_reg: float = 0.01
-    target_spike_rate: float = 0.1
-    lr_scheduler: str = "none"
-    lr_min: float = 1e-5
-    lr_scheduler_patience: int = 30
-    lr_scheduler_factor: float = 0.5
 
     # Feature selection
     feature_selection_method: str = "mibif"
@@ -210,26 +201,15 @@ def build_parser() -> argparse.ArgumentParser:
     train_p.add_argument("--adapt-inc", type=float, default=0.6)
     train_p.add_argument("--decay", type=float, default=0.95)
     train_p.add_argument("--hidden-neurons", type=int, default=64)
-    train_p.add_argument("--hidden-neurons2", type=int, default=64)
     train_p.add_argument("--population-per-class", type=int, default=20)
     train_p.add_argument("--beta", type=float, default=0.95)
     train_p.add_argument("--dropout-prob", type=float, default=0.5)
-    train_p.add_argument("--use-bn", action="store_true", default=True)
-    train_p.add_argument("--no-use-bn", dest="use_bn", action="store_false")
-    train_p.add_argument("--surrogate-slope", type=float, default=25.0)
     train_p.add_argument("--lr", type=float, default=1e-3)
     train_p.add_argument("--weight-decay", type=float, default=0.1)
     train_p.add_argument("--epochs", type=int, default=1000)
     train_p.add_argument("--early-stopping-patience", type=int, default=100)
     train_p.add_argument("--early-stopping-warmup", type=int, default=100)
     train_p.add_argument("--spiking-prob", type=float, default=0.7)
-    train_p.add_argument("--activity-reg", type=float, default=0.01)
-    train_p.add_argument("--target-spike-rate", type=float, default=0.1)
-    train_p.add_argument("--lr-scheduler", choices=["plateau", "cosine", "none"],
-                         default="plateau")
-    train_p.add_argument("--lr-min", type=float, default=1e-5)
-    train_p.add_argument("--lr-scheduler-patience", type=int, default=30)
-    train_p.add_argument("--lr-scheduler-factor", type=float, default=0.5)
     train_p.add_argument("--feature-selection-method",
                          choices=["mibif", "none"], default="mibif")
     train_p.add_argument("--feature-percentile", type=float, default=50.0)
@@ -280,11 +260,9 @@ def config_from_args(args: argparse.Namespace) -> Config:
         "band_range", "bandwidth", "band_step", "min_fisher_fraction",
         "csp_components_per_band", "lambda_r", "euclidean_alignment", "riemannian_mean",
         "base_thresh", "adapt_inc", "decay",
-        "hidden_neurons", "hidden_neurons2", "population_per_class", "beta", "dropout_prob", "use_bn", "surrogate_slope",
+        "hidden_neurons", "population_per_class", "beta", "dropout_prob",
         "lr", "weight_decay", "epochs", "early_stopping_patience",
         "early_stopping_warmup", "spiking_prob",
-        "activity_reg", "target_spike_rate",
-        "lr_scheduler", "lr_min", "lr_scheduler_patience", "lr_scheduler_factor",
         "feature_selection_method", "feature_percentile",
     ]
     for f in optional_fields:

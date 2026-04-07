@@ -152,64 +152,6 @@ def quantize_model(
 
 
 # ---------------------------------------------------------------------------
-# BN folding
-# ---------------------------------------------------------------------------
-
-def fold_batchnorm(model: SNNClassifier) -> SNNClassifier:
-    """Fold BatchNorm1d layers into the preceding Linear layers.
-
-    At deployment time BN reduces to a linear transform that can be absorbed
-    into the preceding Linear weight matrix and bias, eliminating all BN
-    arithmetic from the inference path — making the model neuromorphic-compatible.
-
-    Folding formula
-    ---------------
-    Given ``Linear(W, b)`` followed by ``BatchNorm1d(γ, β, μ, σ²)``:
-
-    ::
-
-        scale     = γ / sqrt(σ² + ε)
-        W_fused   = W * scale[:, None]
-        b_fused   = (b - μ) * scale + β
-
-    The BN layer is replaced with ``nn.Identity()`` after folding.
-    If BN is already ``nn.Identity()`` (``use_bn=False`` model), this is a no-op.
-
-    Parameters
-    ----------
-    model : SNNClassifier
-        Trained model.  Not modified in-place.
-
-    Returns
-    -------
-    SNNClassifier
-        Deep copy with BN folded into Linear weights.
-    """
-    model_f = copy.deepcopy(model)
-    model_f.eval()
-
-    for linear_name, bn_name in [("fc1", "bn1"), ("fc2", "bn2"), ("fc3", "bn3")]:
-        linear = getattr(model_f, linear_name)
-        bn = getattr(model_f, bn_name)
-
-        if not isinstance(bn, nn.BatchNorm1d):
-            continue  # already Identity — nothing to fold
-
-        with torch.no_grad():
-            scale = bn.weight / torch.sqrt(bn.running_var + bn.eps)
-            linear.weight.data *= scale.unsqueeze(1)
-            if linear.bias is not None:
-                linear.bias.data = (linear.bias.data - bn.running_mean) * scale + bn.bias
-            else:
-                linear.bias = nn.Parameter((-bn.running_mean) * scale + bn.bias)
-
-        setattr(model_f, bn_name, nn.Identity())
-
-    logger.info("BN folded into Linear weights — model is deployment-ready.")
-    return model_f
-
-
-# ---------------------------------------------------------------------------
 # CSP filter quantisation
 # ---------------------------------------------------------------------------
 

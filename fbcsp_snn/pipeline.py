@@ -49,7 +49,7 @@ from fbcsp_snn.evaluation import compute_accuracy, compute_confusion_matrix
 from fbcsp_snn.mibif import MIBIFSelector
 from fbcsp_snn.model import SNNClassifier, maybe_compile
 from fbcsp_snn.preprocessing import PairwiseCSP, ZNormaliser, apply_filter_bank
-from fbcsp_snn.quantization import fold_batchnorm, quantize_model, quantization_report
+from fbcsp_snn.quantization import quantize_model, quantization_report
 from fbcsp_snn.training import evaluate_model, train_fold
 from fbcsp_snn.visualization import (
     plot_band_selection,
@@ -252,13 +252,10 @@ def _run_single_fold(
     model = maybe_compile(SNNClassifier(
         n_input=n_input,
         n_hidden=cfg.hidden_neurons,
-        n_hidden2=cfg.hidden_neurons2,
         n_classes=n_classes,
         population_per_class=cfg.population_per_class,
         beta=cfg.beta,
         dropout_prob=cfg.dropout_prob,
-        use_bn=cfg.use_bn,
-        surrogate_slope=cfg.surrogate_slope,
     ).to(DEVICE))
 
     result = train_fold(
@@ -280,33 +277,24 @@ def _run_single_fold(
         device=DEVICE,
         fold_dir=fold_dir,
         log_every=max(1, cfg.epochs // 20),
-        lr_scheduler=cfg.lr_scheduler,
-        lr_min=cfg.lr_min,
-        lr_scheduler_patience=cfg.lr_scheduler_patience,
-        lr_scheduler_factor=cfg.lr_scheduler_factor,
-        activity_reg=cfg.activity_reg,
-        target_spike_rate=cfg.target_spike_rate,
     )
 
-    # ---- Fold BN into Linear (deployment-ready model) ----
-    model_deploy = fold_batchnorm(model)
+    # ---- FP32 evaluate ----
+    val_acc_fp32,  val_preds_fp32  = evaluate_model(model, spikes_val, y_f_val_0,  DEVICE)
+    test_acc_fp32, test_preds_fp32 = evaluate_model(model, spikes_te,  y_test_0,   DEVICE)
 
-    # ---- FP32 evaluate (folded model = what gets deployed) ----
-    val_acc_fp32,  val_preds_fp32  = evaluate_model(model_deploy, spikes_val, y_f_val_0,  DEVICE)
-    test_acc_fp32, test_preds_fp32 = evaluate_model(model_deploy, spikes_te,  y_test_0,   DEVICE)
-
-    # ---- INT8 simulate + evaluate (quantise the folded model) ----
-    model_int8 = quantize_model(model_deploy, bits=8)
+    # ---- INT8 simulate + evaluate ----
+    model_int8 = quantize_model(model, bits=8)
     val_acc_int8,  val_preds_int8  = evaluate_model(model_int8, spikes_val, y_f_val_0, DEVICE)
     test_acc_int8, test_preds_int8 = evaluate_model(model_int8, spikes_te,  y_test_0,  DEVICE)
 
     quantization_report(val_acc_fp32,  val_acc_int8,  label="val")
     quantization_report(test_acc_fp32, test_acc_int8, label="test")
 
-    # ---- Neuron traces (one test-set batch, use folded model) ----
-    model_deploy.eval()
+    # ---- Neuron traces (one test-set batch) ----
+    model.eval()
     with torch.no_grad():
-        spk_out_vis, mem_out_vis = model_deploy(spikes_te[:, :8, :].to(DEVICE))
+        spk_out_vis, mem_out_vis = model(spikes_te[:, :8, :].to(DEVICE))
     plot_neuron_traces(
         spk_out_vis, mem_out_vis,
         save_path=fold_dir / "neuron_traces.png",
@@ -317,7 +305,7 @@ def _run_single_fold(
 
     # ---- Weight histograms ----
     plot_weight_histograms(
-        model_deploy,
+        model,
         save_path=fold_dir / "weight_histograms.png",
         quantized_model=model_int8,
         title=f"Subject {cfg.subject_id} Fold {fold_idx} — Weight Distributions",
@@ -325,10 +313,6 @@ def _run_single_fold(
 
     # ---- Confusion matrices ----
     class_names = _class_names(cfg, n_classes)
-    cm_fp32 = compute_confusion_matrix(y_test_0, test_preds_fp32, n_classes=n_classes, normalize=False)
-    cm_int8 = compute_confusion_matrix(y_test_0, test_preds_int8, n_classes=n_classes, normalize=False)
-    np.save(fold_dir / "cm_fp32.npy", cm_fp32)
-    np.save(fold_dir / "cm_int8.npy", cm_int8)
     plot_confusion_matrix(
         y_test_0, test_preds_fp32, class_names,
         save_path=fold_dir / "confusion_fp32.png",
@@ -363,17 +347,8 @@ def _run_single_fold(
         "csp_m":              m,
         "lambda_r":           cfg.lambda_r,
         "hidden_neurons":     cfg.hidden_neurons,
-        "hidden_neurons2":    cfg.hidden_neurons2,
         "population_per_class": cfg.population_per_class,
         "beta":               cfg.beta,
-        "use_bn":             cfg.use_bn,
-        "surrogate_slope":    cfg.surrogate_slope,
-        "activity_reg":       cfg.activity_reg,
-        "target_spike_rate":  cfg.target_spike_rate,
-        "lr_scheduler":       cfg.lr_scheduler,
-        "lr_min":             cfg.lr_min,
-        "lr_scheduler_patience": cfg.lr_scheduler_patience,
-        "lr_scheduler_factor": cfg.lr_scheduler_factor,
         "feature_method":     cfg.feature_selection_method,
         "feature_percentile": cfg.feature_percentile,
         "best_val_acc_fp32":  round(result.best_val_acc, 6),
@@ -562,13 +537,10 @@ def run_infer(cfg: Config) -> None:
     model = SNNClassifier(
         n_input=n_input,
         n_hidden=params.get("hidden_neurons", cfg.hidden_neurons),
-        n_hidden2=params.get("hidden_neurons2", params.get("hidden_neurons", cfg.hidden_neurons)),
         n_classes=n_classes,
         population_per_class=params.get("population_per_class", cfg.population_per_class),
         beta=params.get("beta", cfg.beta),
         dropout_prob=0.0,   # no dropout at inference
-        use_bn=params.get("use_bn", False),
-        surrogate_slope=params.get("surrogate_slope", 25.0),
     ).to(DEVICE)
     state = torch.load(fold_dir / "best_model.pt", map_location=DEVICE)
     model.load_state_dict(state)
@@ -703,22 +675,74 @@ def run_aggregate(cfg: Config) -> None:
     )
 
     # ---- Aggregated confusion matrix ----
-    # Load pre-saved per-fold confusion matrices (written by run_train).
-    # Falls back to skipping the fold if the file is missing (old runs).
+    # Re-load test predictions by re-running inference on each fold's saved model.
+    # This is lightweight since we just decode; no retraining.
     class_names = _class_names(cfg, n_classes)
     cm_fp32_sum = np.zeros((n_classes, n_classes), dtype=float)
     cm_int8_sum = np.zeros((n_classes, n_classes), dtype=float)
 
+    _, _, X_test, y_test = _load_raw(cfg)
+    y_test_0 = y_test - 1
+    sfreq = _sfreq(cfg)
+
     for r in rows:
         fold_idx = r["fold"]
         fold_dir = subject_dir / f"fold_{fold_idx}"
-        cm_fp32_path = fold_dir / "cm_fp32.npy"
-        cm_int8_path = fold_dir / "cm_int8.npy"
-        if not cm_fp32_path.exists() or not cm_int8_path.exists():
-            logger.warning("cm_*.npy missing for fold %s — skip (re-train to generate)", fold_idx)
+        params   = r
+
+        bands   = [tuple(b) for b in params["bands"]]
+        n_input = params["n_input_features"]
+
+        # Load preprocessing
+        try:
+            with open(fold_dir / "csp_filters.pkl", "rb") as f:
+                csp: PairwiseCSP = pickle.load(f)
+            with open(fold_dir / "znorm.pkl", "rb") as f:
+                znorm: ZNormaliser = pickle.load(f)
+        except FileNotFoundError:
+            logger.warning("Preprocessing pickle missing for fold %s — skip", fold_idx)
             continue
-        cm_fp32_sum += np.load(cm_fp32_path)
-        cm_int8_sum += np.load(cm_int8_path)
+
+        mibif_path = fold_dir / "mibif.pkl"
+        mibif: Optional[MIBIFSelector] = None
+        if mibif_path.exists():
+            with open(mibif_path, "rb") as f:
+                mibif = pickle.load(f)
+
+        X_bands = apply_filter_bank(X_test, bands, sfreq, order=4)
+        proj    = csp.transform(X_bands)
+        X_concat = _concat_projections(proj)
+        X_norm  = znorm.transform(X_concat)
+        spikes  = _spikes_from_concat(X_norm, cfg)
+        if mibif is not None:
+            spikes = mibif.transform(spikes)
+
+        model_path = fold_dir / "best_model.pt"
+        if not model_path.exists():
+            logger.warning("best_model.pt missing for fold %s — skip", fold_idx)
+            continue
+
+        model = SNNClassifier(
+            n_input=n_input,
+            n_hidden=params.get("hidden_neurons", cfg.hidden_neurons),
+            n_classes=n_classes,
+            population_per_class=params.get("population_per_class", cfg.population_per_class),
+            beta=params.get("beta", cfg.beta),
+            dropout_prob=0.0,
+        ).to(DEVICE)
+        state = torch.load(model_path, map_location=DEVICE)
+        model.load_state_dict(state)
+
+        _, preds_fp32 = evaluate_model(model, spikes, y_test_0, DEVICE)
+        cm_fp32_sum += compute_confusion_matrix(
+            y_test_0, preds_fp32, n_classes=n_classes, normalize=False
+        )
+
+        model_int8 = quantize_model(model, bits=8)
+        _, preds_int8 = evaluate_model(model_int8, spikes, y_test_0, DEVICE)
+        cm_int8_sum += compute_confusion_matrix(
+            y_test_0, preds_int8, n_classes=n_classes, normalize=False
+        )
 
     # Row-normalise the summed matrices
     def _row_norm(cm: np.ndarray) -> np.ndarray:

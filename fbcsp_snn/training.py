@@ -202,12 +202,6 @@ def train_fold(
     device: Optional[torch.device] = None,
     fold_dir: Optional[Path] = None,
     log_every: int = 10,
-    lr_scheduler: str = "none",
-    lr_min: float = 1e-5,
-    lr_scheduler_patience: int = 30,
-    lr_scheduler_factor: float = 0.5,
-    activity_reg: float = 0.0,
-    target_spike_rate: float = 0.1,
 ) -> FoldResult:
     """Train an SNN on one CV fold and return performance metrics.
 
@@ -252,24 +246,6 @@ def train_fold(
         Directory to save ``best_model.pt``.  Created if absent.
     log_every : int
         Log metrics every this many epochs.
-    activity_reg : float
-        Coefficient for hidden-layer firing-rate regularisation.  ``0.0``
-        disables it.  Adds ``activity_reg * (mean_hidden_rate - target)²``
-        to the loss, penalising deviation from *target_spike_rate*.
-    target_spike_rate : float
-        Target mean spike rate for the hidden layer (spikes per neuron per
-        timestep).  Typical range 0.05–0.2.
-    lr_scheduler : str
-        LR schedule type: ``"plateau"``, ``"cosine"``, or ``"none"``.
-        ``"plateau"`` reduces LR by *lr_scheduler_factor* after
-        *lr_scheduler_patience* epochs without val-accuracy improvement.
-        ``"cosine"`` anneals from *lr* to *lr_min* over *epochs* steps.
-    lr_min : float
-        Minimum LR floor (used by both schedulers).
-    lr_scheduler_patience : int
-        Plateau scheduler: epochs without improvement before reducing LR.
-    lr_scheduler_factor : float
-        Plateau scheduler: multiplicative LR reduction factor.
 
     Returns
     -------
@@ -290,25 +266,6 @@ def train_fold(
 
     model = model.to(device)
     optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
-
-    if lr_scheduler == "plateau":
-        scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer, mode="max", factor=lr_scheduler_factor,
-            patience=lr_scheduler_patience, min_lr=lr_min,
-        )
-        logger.info(
-            "LR scheduler: ReduceLROnPlateau  factor=%.2f  patience=%d  min_lr=%.2e",
-            lr_scheduler_factor, lr_scheduler_patience, lr_min,
-        )
-    elif lr_scheduler == "cosine":
-        scheduler = optim.lr_scheduler.CosineAnnealingLR(
-            optimizer, T_max=epochs, eta_min=lr_min,
-        )
-        logger.info(
-            "LR scheduler: CosineAnnealingLR  T_max=%d  eta_min=%.2e", epochs, lr_min,
-        )
-    else:
-        scheduler = None
 
     use_amp = device.type == "cuda"
     scaler = GradScaler(enabled=use_amp)
@@ -341,11 +298,8 @@ def train_fold(
             optimizer.zero_grad()
 
             with autocast(device_type=device.type, enabled=use_amp):
-                spk_out, _, spk_hidden = model(batch_spikes, return_hidden=True)
+                spk_out, _ = model(batch_spikes)
                 loss = van_rossum_loss(spk_out, target, tau=tau_vr)
-                if activity_reg > 0.0:
-                    mean_rate = spk_hidden.float().mean()
-                    loss = loss + activity_reg * (mean_rate - target_spike_rate) ** 2
 
             scaler.scale(loss).backward()
             scaler.step(optimizer)
@@ -369,21 +323,10 @@ def train_fold(
                 fold_dir.mkdir(parents=True, exist_ok=True)
                 torch.save(best_state, fold_dir / "best_model.pt")
 
-        # LR scheduler step — only after warmup so early exploration isn't cut short
-        prev_lr = optimizer.param_groups[0]["lr"]
-        if scheduler is not None and epoch >= warmup:
-            if lr_scheduler == "plateau":
-                scheduler.step(val_acc)
-            else:
-                scheduler.step()
-        current_lr = optimizer.param_groups[0]["lr"]
-        lr_changed = current_lr != prev_lr
-
-        if (epoch + 1) % log_every == 0 or should_stop or lr_changed:
+        if (epoch + 1) % log_every == 0 or should_stop:
             logger.info(
-                "  epoch %3d/%d  loss %.5f  val_acc %.3f  best %.3f  lr %.2e%s",
-                epoch + 1, epochs, mean_loss, val_acc, es.best_acc, current_lr,
-                "  [LR reduced]" if lr_changed else "",
+                "  epoch %3d/%d  loss %.5f  val_acc %.3f  best %.3f",
+                epoch + 1, epochs, mean_loss, val_acc, es.best_acc,
             )
 
         if should_stop:
