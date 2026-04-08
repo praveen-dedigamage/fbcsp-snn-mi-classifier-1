@@ -237,10 +237,17 @@ class PairwiseCSP:
             for pair in self.pairs_:
                 c1, c2 = pair
                 if self.ledoit_wolf:
-                    # Ledoit-Wolf: analytically optimal shrinkage per trial,
-                    # trace-normalised and averaged. No Tikhonov needed on top.
-                    cov_a = _ledoit_wolf_cov(X_band[y == c1])
-                    cov_b = _ledoit_wolf_cov(X_band[y == c2])
+                    # LW per-trial covariances → Riemannian mean (or arithmetic).
+                    # Replaces only the regularisation; averaging method follows
+                    # the riemannian_mean flag so the comparison vs V4.1 is clean.
+                    covs_a = _ledoit_wolf_covs(X_band[y == c1])
+                    covs_b = _ledoit_wolf_covs(X_band[y == c2])
+                    if self.riemannian_mean:
+                        cov_a = _riemannian_mean_from_covs(covs_a)
+                        cov_b = _riemannian_mean_from_covs(covs_b)
+                    else:
+                        cov_a = covs_a.mean(axis=0)
+                        cov_b = covs_b.mean(axis=0)
                     W = _solve_csp(cov_a, cov_b, self.m)
                 else:
                     _cov_fn = _riemannian_mean_cov if self.riemannian_mean else _mean_normalised_cov
@@ -412,52 +419,43 @@ def _spd_exp(S: np.ndarray) -> np.ndarray:
     return (vecs * np.exp(vals)) @ vecs.T
 
 
-def _riemannian_mean_cov(
-    X_trials: np.ndarray,
+def _riemannian_mean_from_covs(
+    covs: np.ndarray,
     max_iter: int = 50,
     tol: float = 1e-7,
 ) -> np.ndarray:
-    """Riemannian (Fréchet) mean of trace-normalised covariance matrices.
+    """Riemannian (Fréchet) mean of a stack of SPD matrices.
 
-    Uses gradient descent on the SPD manifold (Moakher 2005).  Each step maps
-    all covariances to the tangent space at the current estimate via the matrix
-    logarithm, takes the Euclidean mean there, and maps back via the matrix
-    exponential.  Convergence is quadratic near the true mean.
+    Uses gradient descent on the SPD manifold (Moakher 2005).  Accepts
+    pre-computed covariance matrices so that different covariance estimators
+    (e.g. Ledoit-Wolf) can feed into the same Riemannian averaging step.
 
     Parameters
     ----------
-    X_trials : np.ndarray
-        Shape ``(n_trials, n_channels, n_samples)``.
+    covs : np.ndarray
+        Pre-computed, trace-normalised SPD matrices,
+        shape ``(n_trials, n_channels, n_channels)``.
     max_iter : int
-        Maximum gradient descent iterations.
+        Maximum gradient-descent iterations.
     tol : float
         Frobenius-norm convergence threshold.
 
     Returns
     -------
     np.ndarray
-        Riemannian mean covariance, shape ``(n_channels, n_channels)``.
+        Riemannian mean, shape ``(n_channels, n_channels)``.
     """
-    n_trials = X_trials.shape[0]
-
-    # Per-trial trace-normalised covariance
-    covs = np.einsum("tcs,tds->tcd", X_trials, X_trials)   # (n_trials, C, C)
-    traces = np.trace(covs, axis1=1, axis2=2)[:, None, None]
-    covs = covs / (traces + 1e-12)
-
-    # Initialise with arithmetic mean
-    M = covs.mean(axis=0)
+    n_trials = covs.shape[0]
+    M = covs.mean(axis=0)   # arithmetic initialisation
 
     for _ in range(max_iter):
         M_sqrt, M_invsqrt = _spd_sqrt_invsqrt(M)
 
-        # Gradient: mean of log-mapped covariances in tangent space at M
         grad = np.zeros_like(M)
         for C in covs:
             grad += _spd_log(M_invsqrt @ C @ M_invsqrt)
         grad /= n_trials
 
-        # Retract back to manifold
         M_new = M_sqrt @ _spd_exp(grad) @ M_sqrt
 
         if np.linalg.norm(M_new - M, "fro") < tol:
@@ -466,6 +464,36 @@ def _riemannian_mean_cov(
         M = M_new
 
     return M
+
+
+def _riemannian_mean_cov(
+    X_trials: np.ndarray,
+    max_iter: int = 50,
+    tol: float = 1e-7,
+) -> np.ndarray:
+    """Riemannian mean of trace-normalised covariances computed from raw trials.
+
+    Thin wrapper around :func:`_riemannian_mean_from_covs` that handles the
+    raw-data → covariance step internally.
+
+    Parameters
+    ----------
+    X_trials : np.ndarray
+        Shape ``(n_trials, n_channels, n_samples)``.
+    max_iter : int
+        Maximum gradient-descent iterations.
+    tol : float
+        Frobenius-norm convergence threshold.
+
+    Returns
+    -------
+    np.ndarray
+        Riemannian mean covariance, shape ``(n_channels, n_channels)``.
+    """
+    covs = np.einsum("tcs,tds->tcd", X_trials, X_trials)   # (n_trials, C, C)
+    traces = np.trace(covs, axis1=1, axis2=2)[:, None, None]
+    covs = covs / (traces + 1e-12)
+    return _riemannian_mean_from_covs(covs, max_iter=max_iter, tol=tol)
 
 
 def _mean_normalised_cov(X_trials: np.ndarray) -> np.ndarray:
@@ -493,14 +521,13 @@ def _mean_normalised_cov(X_trials: np.ndarray) -> np.ndarray:
     return covs_norm.mean(axis=0)
 
 
-def _ledoit_wolf_cov(X_trials: np.ndarray) -> np.ndarray:
-    """Mean of Ledoit-Wolf regularised, trace-normalised per-trial covariances.
+def _ledoit_wolf_covs(X_trials: np.ndarray) -> np.ndarray:
+    """Per-trial Ledoit-Wolf regularised, trace-normalised covariance matrices.
 
-    Drop-in replacement for :func:`_mean_normalised_cov`.  Each trial's
-    covariance is estimated with analytically optimal shrinkage
-    (Ledoit & Wolf 2004) and then trace-normalised before averaging.  This
-    gives more robust estimates than fixed Tikhonov regularisation when the
-    number of channels is large relative to the number of available samples.
+    Each trial is regularised with analytically optimal shrinkage
+    (Ledoit & Wolf 2004) and trace-normalised.  Returns the full stack of
+    per-trial SPD matrices so the caller can pass them to either
+    :func:`_riemannian_mean_from_covs` or take an arithmetic mean.
 
     Parameters
     ----------
@@ -510,15 +537,16 @@ def _ledoit_wolf_cov(X_trials: np.ndarray) -> np.ndarray:
     Returns
     -------
     np.ndarray
-        Averaged regularised covariance, shape ``(n_channels, n_channels)``.
+        Per-trial regularised covariances, shape
+        ``(n_trials, n_channels, n_channels)``.
     """
     n_trials, n_channels, _ = X_trials.shape
     covs = np.empty((n_trials, n_channels, n_channels), dtype=np.float64)
-    for i, trial in enumerate(X_trials):          # trial: (n_channels, n_samples)
-        cov, _ = _lw_estimate(trial.T)            # sklearn expects (n_samples, n_channels)
+    for i, trial in enumerate(X_trials):    # trial: (n_channels, n_samples)
+        cov, _ = _lw_estimate(trial.T)      # sklearn expects (n_samples, n_channels)
         tr = np.trace(cov)
         covs[i] = cov / (tr + 1e-12)
-    return covs.mean(axis=0)
+    return covs
 
 
 def _regularise(cov: np.ndarray, lambda_r: float) -> np.ndarray:
