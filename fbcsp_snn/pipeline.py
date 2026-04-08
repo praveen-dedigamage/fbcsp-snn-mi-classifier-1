@@ -206,7 +206,8 @@ def _run_single_fold(
     # ---- Pairwise CSP ----
     csp = PairwiseCSP(m=m, lambda_r=cfg.lambda_r,
                       euclidean_alignment=cfg.euclidean_alignment,
-                      riemannian_mean=cfg.riemannian_mean)
+                      riemannian_mean=cfg.riemannian_mean,
+                      ledoit_wolf=cfg.csp_ledoit_wolf)
     csp.fit(X_bands_tr, y_f_tr)
 
     proj_tr  = csp.transform(X_bands_tr)

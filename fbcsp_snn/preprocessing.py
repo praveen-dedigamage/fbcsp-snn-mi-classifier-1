@@ -37,6 +37,7 @@ from typing import Dict, List, Tuple
 import numpy as np
 from scipy.linalg import eigh
 from scipy.signal import butter, sosfiltfilt
+from sklearn.covariance import ledoit_wolf as _lw_estimate
 
 from fbcsp_snn import setup_logger
 
@@ -185,11 +186,13 @@ class PairwiseCSP:
         lambda_r: float = 0.0001,
         euclidean_alignment: bool = True,
         riemannian_mean: bool = True,
+        ledoit_wolf: bool = False,
     ) -> None:
         self.m = m
         self.lambda_r = lambda_r
         self.euclidean_alignment = euclidean_alignment
         self.riemannian_mean = riemannian_mean
+        self.ledoit_wolf = ledoit_wolf
         self.filters_: Dict[Tuple[int, _Pair], np.ndarray] = {}
         self.ea_whiteners_: Dict[int, np.ndarray] = {}
         self.pairs_: List[_Pair] = []
@@ -231,25 +234,30 @@ class PairwiseCSP:
                 self.ea_whiteners_[b_idx] = R_invsqrt
                 X_band = _apply_ea(X_band, R_invsqrt)
 
-            _cov_fn = _riemannian_mean_cov if self.riemannian_mean else _mean_normalised_cov
-
             for pair in self.pairs_:
                 c1, c2 = pair
-                cov_a = _cov_fn(X_band[y == c1])
-                cov_b = _cov_fn(X_band[y == c2])
-                cov_a_reg = _regularise(cov_a, self.lambda_r)
-                cov_b_reg = _regularise(cov_b, self.lambda_r)
-
-                W = _solve_csp(cov_a_reg, cov_b_reg, self.m)
+                if self.ledoit_wolf:
+                    # Ledoit-Wolf: analytically optimal shrinkage per trial,
+                    # trace-normalised and averaged. No Tikhonov needed on top.
+                    cov_a = _ledoit_wolf_cov(X_band[y == c1])
+                    cov_b = _ledoit_wolf_cov(X_band[y == c2])
+                    W = _solve_csp(cov_a, cov_b, self.m)
+                else:
+                    _cov_fn = _riemannian_mean_cov if self.riemannian_mean else _mean_normalised_cov
+                    cov_a = _cov_fn(X_band[y == c1])
+                    cov_b = _cov_fn(X_band[y == c2])
+                    cov_a = _regularise(cov_a, self.lambda_r)
+                    cov_b = _regularise(cov_b, self.lambda_r)
+                    W = _solve_csp(cov_a, cov_b, self.m)
                 self.filters_[(b_idx, pair)] = W
 
         n_bands = len(X_bands)
         n_pairs = len(self.pairs_)
         logger.info(
             "PairwiseCSP fit: %d bands × %d pairs × %d filters = %d total filters"
-            "  (EA: %s  RiemannMean: %s)",
+            "  (EA: %s  RiemannMean: %s  LedoitWolf: %s)",
             n_bands, n_pairs, 2 * self.m, n_bands * n_pairs * 2 * self.m,
-            self.euclidean_alignment, self.riemannian_mean,
+            self.euclidean_alignment, self.riemannian_mean, self.ledoit_wolf,
         )
         return self
 
@@ -483,6 +491,34 @@ def _mean_normalised_cov(X_trials: np.ndarray) -> np.ndarray:
     traces = np.trace(covs, axis1=1, axis2=2)[:, None, None]  # (n_trials, 1, 1)
     covs_norm = covs / (traces + 1e-12)
     return covs_norm.mean(axis=0)
+
+
+def _ledoit_wolf_cov(X_trials: np.ndarray) -> np.ndarray:
+    """Mean of Ledoit-Wolf regularised, trace-normalised per-trial covariances.
+
+    Drop-in replacement for :func:`_mean_normalised_cov`.  Each trial's
+    covariance is estimated with analytically optimal shrinkage
+    (Ledoit & Wolf 2004) and then trace-normalised before averaging.  This
+    gives more robust estimates than fixed Tikhonov regularisation when the
+    number of channels is large relative to the number of available samples.
+
+    Parameters
+    ----------
+    X_trials : np.ndarray
+        Shape ``(n_trials, n_channels, n_samples)``.
+
+    Returns
+    -------
+    np.ndarray
+        Averaged regularised covariance, shape ``(n_channels, n_channels)``.
+    """
+    n_trials, n_channels, _ = X_trials.shape
+    covs = np.empty((n_trials, n_channels, n_channels), dtype=np.float64)
+    for i, trial in enumerate(X_trials):          # trial: (n_channels, n_samples)
+        cov, _ = _lw_estimate(trial.T)            # sklearn expects (n_samples, n_channels)
+        tr = np.trace(cov)
+        covs[i] = cov / (tr + 1e-12)
+    return covs.mean(axis=0)
 
 
 def _regularise(cov: np.ndarray, lambda_r: float) -> np.ndarray:

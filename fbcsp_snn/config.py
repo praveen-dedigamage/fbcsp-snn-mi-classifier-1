@@ -105,6 +105,7 @@ class Config:
     lambda_r: float = 0.0001
     euclidean_alignment: bool = True
     riemannian_mean: bool = True
+    csp_ledoit_wolf: bool = False
 
     # Encoding
     base_thresh: float = 0.001
@@ -198,6 +199,10 @@ def build_parser() -> argparse.ArgumentParser:
     train_p.add_argument("--riemannian-mean", action="store_true", default=True)
     train_p.add_argument("--no-riemannian-mean", dest="riemannian_mean",
                          action="store_false")
+    train_p.add_argument("--csp-ledoit-wolf", dest="csp_ledoit_wolf",
+                         action="store_true", default=False,
+                         help="Use Ledoit-Wolf shrinkage for CSP covariance "
+                              "estimation instead of fixed Tikhonov regularisation.")
     train_p.add_argument("--base-thresh", type=float, default=0.001)
     train_p.add_argument("--adapt-inc", type=float, default=0.6)
     train_p.add_argument("--decay", type=float, default=0.95)
@@ -263,7 +268,7 @@ def config_from_args(args: argparse.Namespace) -> Config:
     optional_fields = [
         "n_folds", "fold", "val_fraction", "adaptive_bands", "n_adaptive_bands", "freq_bands",
         "band_range", "bandwidth", "band_step", "min_fisher_fraction",
-        "csp_components_per_band", "lambda_r", "euclidean_alignment", "riemannian_mean",
+        "csp_components_per_band", "lambda_r", "euclidean_alignment", "riemannian_mean", "csp_ledoit_wolf",
         "base_thresh", "adapt_inc", "decay",
         "hidden_neurons", "population_per_class", "beta", "dropout_prob",
         "lr", "weight_decay", "epochs", "early_stopping_patience",
