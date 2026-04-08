@@ -49,7 +49,7 @@ from fbcsp_snn.encoding import encode_tensor
 from fbcsp_snn.evaluation import compute_accuracy, compute_confusion_matrix
 from fbcsp_snn.mibif import MIBIFSelector
 from fbcsp_snn.model import SNNClassifier, maybe_compile
-from fbcsp_snn.preprocessing import PairwiseCSP, ZNormaliser, apply_filter_bank
+from fbcsp_snn.preprocessing import PairwiseCSP, ZNormaliser, apply_filter_bank, window_filter_bank
 from fbcsp_snn.quantization import quantize_model, quantization_report
 from fbcsp_snn.training import evaluate_model, train_fold
 from fbcsp_snn.visualization import (
@@ -203,12 +203,32 @@ def _run_single_fold(
     X_bands_val = apply_filter_bank(X_f_val, bands, sfreq, order=4)
     X_bands_te  = apply_filter_bank(X_test,  bands, sfreq, order=4)
 
+    # ---- Sliding-window augmentation (CSP fitting only) ----
+    # Windows the filtered training bands to increase covariance sample count.
+    # Val and test are never touched; CSP spatial filters are applied to
+    # full-length trials after fitting.
+    if cfg.augment_windows:
+        win_samples  = int(cfg.window_duration * sfreq)
+        step_samples = int(cfg.window_step * sfreq)
+        X_bands_csp, y_csp = window_filter_bank(
+            X_bands_tr, y_f_tr, win_samples, step_samples
+        )
+        n_win = len(y_csp) // len(y_f_tr)
+        logger.info(
+            "Window augmentation: %d trials × %d windows = %d samples "
+            "(window=%.1fs step=%.1fs)",
+            len(y_f_tr), n_win, len(y_csp),
+            cfg.window_duration, cfg.window_step,
+        )
+    else:
+        X_bands_csp, y_csp = X_bands_tr, y_f_tr
+
     # ---- Pairwise CSP ----
     csp = PairwiseCSP(m=m, lambda_r=cfg.lambda_r,
                       euclidean_alignment=cfg.euclidean_alignment,
                       riemannian_mean=cfg.riemannian_mean,
                       ledoit_wolf=cfg.csp_ledoit_wolf)
-    csp.fit(X_bands_tr, y_f_tr)
+    csp.fit(X_bands_csp, y_csp)
 
     proj_tr  = csp.transform(X_bands_tr)
     proj_val = csp.transform(X_bands_val)

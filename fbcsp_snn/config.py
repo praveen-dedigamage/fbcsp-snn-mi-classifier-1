@@ -107,6 +107,11 @@ class Config:
     riemannian_mean: bool = True
     csp_ledoit_wolf: bool = False
 
+    # Data augmentation (CSP fitting only)
+    augment_windows: bool = False
+    window_duration: float = 2.0   # seconds
+    window_step: float = 0.5       # seconds → 75 % overlap at 250 Hz
+
     # Encoding
     base_thresh: float = 0.001
     adapt_inc: float = 0.6
@@ -203,6 +208,15 @@ def build_parser() -> argparse.ArgumentParser:
                          action="store_true", default=False,
                          help="Use Ledoit-Wolf shrinkage for CSP covariance "
                               "estimation instead of fixed Tikhonov regularisation.")
+    train_p.add_argument("--augment-windows", dest="augment_windows",
+                         action="store_true", default=False,
+                         help="Augment CSP covariance fitting with overlapping "
+                              "sliding windows (val/test unaffected).")
+    train_p.add_argument("--window-duration", type=float, default=2.0,
+                         help="Sliding window length in seconds (default 2.0).")
+    train_p.add_argument("--window-step", type=float, default=0.5,
+                         help="Sliding window step in seconds (default 0.5 → "
+                              "75%% overlap at 250 Hz).")
     train_p.add_argument("--base-thresh", type=float, default=0.001)
     train_p.add_argument("--adapt-inc", type=float, default=0.6)
     train_p.add_argument("--decay", type=float, default=0.95)
@@ -269,6 +283,7 @@ def config_from_args(args: argparse.Namespace) -> Config:
         "n_folds", "fold", "val_fraction", "adaptive_bands", "n_adaptive_bands", "freq_bands",
         "band_range", "bandwidth", "band_step", "min_fisher_fraction",
         "csp_components_per_band", "lambda_r", "euclidean_alignment", "riemannian_mean", "csp_ledoit_wolf",
+        "augment_windows", "window_duration", "window_step",
         "base_thresh", "adapt_inc", "decay",
         "hidden_neurons", "population_per_class", "beta", "dropout_prob",
         "lr", "weight_decay", "epochs", "early_stopping_patience",

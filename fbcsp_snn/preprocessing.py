@@ -93,6 +93,55 @@ def bandpass_filter(
     return X_filt_2d.reshape(n_trials, n_channels, n_samples).astype(np.float32)
 
 
+def window_filter_bank(
+    X_bands: List[np.ndarray],
+    y: np.ndarray,
+    window_samples: int,
+    step_samples: int,
+) -> Tuple[List[np.ndarray], np.ndarray]:
+    """Slide overlapping windows over filter-bank output for augmented CSP fitting.
+
+    Used exclusively to augment the training set before CSP covariance
+    estimation.  Val and test data are never windowed — CSP spatial filters
+    are still applied to full-length trials downstream.
+
+    Parameters
+    ----------
+    X_bands : List[np.ndarray]
+        Per-band filtered EEG, each ``(n_trials, n_channels, n_samples)``.
+    y : np.ndarray
+        Class labels, shape ``(n_trials,)``.
+    window_samples : int
+        Window length in samples.
+    step_samples : int
+        Step between consecutive window starts in samples.
+
+    Returns
+    -------
+    List[np.ndarray]
+        Windowed data per band, each
+        ``(n_trials × n_windows_per_trial, n_channels, window_samples)``.
+    np.ndarray
+        Replicated labels, shape ``(n_trials × n_windows_per_trial,)``.
+    """
+    n_trials, _, n_samples = X_bands[0].shape
+    starts = list(range(0, n_samples - window_samples + 1, step_samples))
+    n_win = len(starts)
+
+    y_aug = np.repeat(y, n_win)
+
+    X_bands_aug: List[np.ndarray] = []
+    for X_band in X_bands:
+        # (n_trials, n_channels, n_samples) → (n_trials*n_win, n_channels, window_samples)
+        windows = np.stack(
+            [X_band[:, :, s:s + window_samples] for s in starts],
+            axis=1,                              # (n_trials, n_win, n_channels, window_samples)
+        ).reshape(n_trials * n_win, X_band.shape[1], window_samples)
+        X_bands_aug.append(windows)
+
+    return X_bands_aug, y_aug
+
+
 def apply_filter_bank(
     X: np.ndarray,
     bands: List[Tuple[float, float]],
