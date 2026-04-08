@@ -16,11 +16,13 @@
 set -euo pipefail
 
 PROJECT_DIR=/scratch/project_2003397/praveen/fbcsp-snn-mi-classifier-1
+RESULTS_DIR="${RESULTS_DIR:-Results}"
 
 echo "=============================================="
 echo "  FBCSP-SNN Cross-Subject Analysis"
-echo "  Node:  $(hostname)"
-echo "  Start: $(date)"
+echo "  RESULTS_DIR: ${RESULTS_DIR}"
+echo "  Node:        $(hostname)"
+echo "  Start:       $(date)"
 echo "=============================================="
 
 unset SINGULARITY_BIND
@@ -33,18 +35,18 @@ cd "${PROJECT_DIR}"
 
 # Cross-subject summary table + bar chart
 python analyze_results.py \
-    --results-dir Results \
+    --results-dir "${RESULTS_DIR}" \
     --subjects 1 2 3 4 5 6 7 8 9
 
 # Print compact results summary
 echo ""
 echo "=============================================="
-echo "  RESULTS SUMMARY"
+echo "  RESULTS SUMMARY  (${RESULTS_DIR})"
 echo "=============================================="
 python - <<'PYEOF'
-import csv, pathlib, statistics
+import csv, pathlib, statistics, os
 
-results_dir = pathlib.Path("Results")
+results_dir = pathlib.Path(os.environ.get("RESULTS_DIR", "Results"))
 subjects = list(range(1, 10))
 
 rows = []
@@ -92,5 +94,5 @@ if fp32_all:
 PYEOF
 
 echo ""
-echo "Results saved in ${PROJECT_DIR}/Results/"
+echo "Results saved in ${PROJECT_DIR}/${RESULTS_DIR}/"
 echo "End: $(date)"

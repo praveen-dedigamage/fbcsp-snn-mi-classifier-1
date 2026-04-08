@@ -4,7 +4,16 @@
 #
 # Usage:
 #   cd /scratch/project_2003397/praveen/fbcsp-snn-mi-classifier-1
-#   bash submit_puhti.sh
+#   bash submit_puhti.sh [RESULTS_DIR [EXTRA_TRAIN_ARGS...]]
+#
+# Examples:
+#   bash submit_puhti.sh                                    # default: Results/
+#   bash submit_puhti.sh Results_mif005 --mi-fraction 0.05
+#   bash submit_puhti.sh Results_mif010 --mi-fraction 0.10
+#   bash submit_puhti.sh Results_mif015 --mi-fraction 0.15
+#
+# Each experiment writes to its own RESULTS_DIR so parallel runs
+# never overwrite each other.
 #
 # Dependency chain:
 #   - Each subject's aggregate job triggers as soon as its own
@@ -21,6 +30,15 @@ set -euo pipefail
 cd "$(dirname "$0")"
 mkdir -p logs
 
+# --- Parse arguments --------------------------------------------------------
+RESULTS_DIR="${1:-Results}"
+shift 2>/dev/null || true   # remove RESULTS_DIR; OK if no args were given
+EXTRA_ARGS="${*}"           # remaining args forwarded to every training task
+
+echo "RESULTS_DIR: ${RESULTS_DIR}"
+echo "EXTRA_ARGS:  ${EXTRA_ARGS:-<none>}"
+echo ""
+
 # Read N_FOLDS from the array script — single source of truth
 N_FOLDS=$(grep '^N_FOLDS=' run_puhti_array.sh | cut -d= -f2)
 if [ -z "${N_FOLDS}" ]; then
@@ -30,10 +48,10 @@ fi
 echo "N_FOLDS=${N_FOLDS} (read from run_puhti_array.sh)"
 
 # Remove fold directories with index >= N_FOLDS (stale from a previous higher-fold run)
-echo "Cleaning up stale fold directories (fold_${N_FOLDS} and above)..."
+echo "Cleaning up stale fold directories (fold_${N_FOLDS} and above) in ${RESULTS_DIR}/..."
 REMOVED=0
 for S in $(seq 1 9); do
-    for F in Results/Subject_${S}/fold_*/; do
+    for F in "${RESULTS_DIR}"/Subject_${S}/fold_*/; do
         [ -d "${F}" ] || continue
         FOLD_NUM=$(basename "${F}" | sed 's/fold_//')
         if [ "${FOLD_NUM}" -ge "${N_FOLDS}" ]; then
@@ -47,7 +65,10 @@ done
 echo ""
 
 # --- Stage 1: Training array (N_FOLDS × 9 tasks) ---------------------------
-TRAIN_OUTPUT=$(sbatch run_puhti_array.sh)
+# RESULTS_DIR and EXTRA_ARGS are exported into every array task environment.
+TRAIN_OUTPUT=$(sbatch \
+    --export="ALL,RESULTS_DIR=${RESULTS_DIR},EXTRA_ARGS=${EXTRA_ARGS}" \
+    run_puhti_array.sh)
 TRAIN_JOBID=$(echo "${TRAIN_OUTPUT}" | awk '{print $4}')
 echo "${TRAIN_OUTPUT}"
 echo ""
@@ -68,7 +89,7 @@ for S in $(seq 1 9); do
 
     AGG_OUTPUT=$(sbatch --dependency=${DEP} \
                         --job-name="fbcsp_agg_S${S}" \
-                        --export=ALL,SUBJECT_ID=${S} \
+                        --export="ALL,SUBJECT_ID=${S},RESULTS_DIR=${RESULTS_DIR}" \
                         run_puhti_aggregate.sh)
     AGG_JOBID=$(echo "${AGG_OUTPUT}" | awk '{print $4}')
     AGG_JOBIDS+=("${AGG_JOBID}")
@@ -82,13 +103,17 @@ for JID in "${AGG_JOBIDS[@]}"; do
     ANALYZE_DEP="${ANALYZE_DEP}:${JID}"
 done
 
-ANALYZE_OUTPUT=$(sbatch --dependency=${ANALYZE_DEP} run_puhti_analyze.sh)
+ANALYZE_OUTPUT=$(sbatch --dependency=${ANALYZE_DEP} \
+    --export="ALL,RESULTS_DIR=${RESULTS_DIR}" \
+    run_puhti_analyze.sh)
 ANALYZE_JOBID=$(echo "${ANALYZE_OUTPUT}" | awk '{print $4}')
 echo "${ANALYZE_OUTPUT}"
 echo ""
 
 echo "=============================================="
 echo "  All jobs submitted"
+echo "  Results dir: ${RESULTS_DIR}"
+echo "  Extra args:  ${EXTRA_ARGS:-<none>}"
 echo "  Train job:   ${TRAIN_JOBID} ($(( 9 * N_FOLDS )) tasks)"
 echo "  Aggregate:   ${AGG_JOBIDS[*]} (9 jobs)"
 echo "  Analyze:     ${ANALYZE_JOBID} (after all aggregates)"

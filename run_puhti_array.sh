@@ -36,6 +36,11 @@ set -euo pipefail
 N_FOLDS=5
 TASK_ID=${SLURM_ARRAY_TASK_ID}
 
+# Allow submit_puhti.sh to inject a custom results directory and extra flags.
+# Defaults keep the script independently runnable with `sbatch run_puhti_array.sh`.
+RESULTS_DIR="${RESULTS_DIR:-Results}"
+EXTRA_ARGS="${EXTRA_ARGS:-}"
+
 # Derive 1-indexed subject and 0-indexed fold from task ID
 SUBJECT_ID=$(( (TASK_ID - 1) / N_FOLDS + 1 ))
 FOLD_IDX=$(( (TASK_ID - 1) % N_FOLDS ))
@@ -45,6 +50,8 @@ PROJECT_DIR=/scratch/project_2003397/praveen/fbcsp-snn-mi-classifier-1
 echo "=============================================="
 echo "  FBCSP-SNN  V6.4"
 echo "  Task:    ${TASK_ID}  →  Subject ${SUBJECT_ID}, Fold ${FOLD_IDX}"
+echo "  Results: ${RESULTS_DIR}"
+echo "  Extra:   ${EXTRA_ARGS:-<none>}"
 echo "  Node:    $(hostname)"
 echo "  GPU:     $(nvidia-smi --query-gpu=name --format=csv,noheader)"
 echo "  Start:   $(date)"
@@ -95,7 +102,8 @@ python main.py train \
     --spiking-prob 0.7 \
     --feature-selection-method mibif \
     --mi-fraction 0.1 \
-    --results-dir Results
+    --results-dir "${RESULTS_DIR}" \
+    ${EXTRA_ARGS}
 
 EXIT_CODE=$?
 
