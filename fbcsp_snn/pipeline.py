@@ -245,7 +245,9 @@ def _run_single_fold(
     mibif: Optional[MIBIFSelector] = None
     if cfg.feature_selection_method == "mibif":
         mibif = MIBIFSelector(
-            feature_percentile=cfg.feature_percentile, random_state=42
+            feature_percentile=cfg.feature_percentile,
+            mi_fraction=cfg.mi_fraction,
+            random_state=42,
         )
         spikes_tr  = mibif.fit_transform(spikes_tr,  y_f_tr_0)
         spikes_val = mibif.transform(spikes_val)
@@ -365,6 +367,8 @@ def _run_single_fold(
         "beta":               cfg.beta,
         "feature_method":     cfg.feature_selection_method,
         "feature_percentile": cfg.feature_percentile,
+        "mi_fraction":        cfg.mi_fraction,
+        "n_features_selected": n_input * 2 if mibif is None else len(mibif.selected_indices_),
         "best_val_acc_fp32":  round(result.best_val_acc, 6),
         "best_epoch":         result.best_epoch,
         "stopped_epoch":      result.stopped_epoch,

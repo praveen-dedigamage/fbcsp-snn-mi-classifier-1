@@ -128,6 +128,7 @@ class Config:
     # Feature selection
     feature_selection_method: str = "mibif"
     feature_percentile: float = 50.0
+    mi_fraction: Optional[float] = None   # adaptive mode: keep MI >= mi_fraction*max_MI
 
     # I/O
     results_dir: str = "Results"
@@ -213,6 +214,10 @@ def build_parser() -> argparse.ArgumentParser:
     train_p.add_argument("--feature-selection-method",
                          choices=["mibif", "none"], default="mibif")
     train_p.add_argument("--feature-percentile", type=float, default=50.0)
+    train_p.add_argument("--mi-fraction", type=float, default=None,
+                         help="Adaptive MIBIF threshold: keep features with "
+                              "MI >= mi_fraction * max_MI. When set, overrides "
+                              "--feature-percentile. Try 0.05-0.3.")
 
     # ---- infer ----
     infer_p = sub.add_parser("infer", parents=[shared], help="Run inference.")
@@ -263,7 +268,7 @@ def config_from_args(args: argparse.Namespace) -> Config:
         "hidden_neurons", "population_per_class", "beta", "dropout_prob",
         "lr", "weight_decay", "epochs", "early_stopping_patience",
         "early_stopping_warmup", "spiking_prob",
-        "feature_selection_method", "feature_percentile",
+        "feature_selection_method", "feature_percentile", "mi_fraction",
     ]
     for f in optional_fields:
         if hasattr(args, f):

@@ -23,12 +23,29 @@ logger: logging.Logger = setup_logger(__name__)
 
 
 class MIBIFSelector:
-    """Select the top-K% features by mutual information with class labels.
+    """Select features by mutual information with class labels.
+
+    Two selection modes (mutually exclusive — ``mi_fraction`` takes priority):
+
+    **Adaptive mode** (``mi_fraction`` is set):
+        Keep every feature whose MI score exceeds ``mi_fraction × max_MI_score``.
+        The number of selected features adapts automatically per fold/subject
+        based on the shape of the MI score distribution.  Analogous to
+        ``min_fisher_fraction`` in band selection.
+
+    **Percentile mode** (``mi_fraction`` is None, default):
+        Keep the top ``feature_percentile``% of features by MI score.
+        Fixed feature count across all folds/subjects.
 
     Parameters
     ----------
     feature_percentile : float
-        Percentage of features to *keep* (e.g. ``50.0`` keeps the top 50 %).
+        Percentage of features to keep in percentile mode (e.g. ``50.0``).
+        Ignored when ``mi_fraction`` is set.
+    mi_fraction : float or None
+        Adaptive threshold as a fraction of the maximum MI score.
+        Features with ``MI_score >= mi_fraction * max(MI_scores)`` are kept.
+        ``None`` disables adaptive mode (uses ``feature_percentile`` instead).
     random_state : int
         Seed passed to ``mutual_info_classif`` for reproducibility.
 
@@ -45,9 +62,11 @@ class MIBIFSelector:
     def __init__(
         self,
         feature_percentile: float = 50.0,
+        mi_fraction: float | None = None,
         random_state: int = 42,
     ) -> None:
         self.feature_percentile = feature_percentile
+        self.mi_fraction = mi_fraction
         self.random_state = random_state
         self.selected_indices_: np.ndarray = np.array([], dtype=np.int64)
         self.mi_scores_: np.ndarray = np.array([])
@@ -86,23 +105,32 @@ class MIBIFSelector:
             random_state=self.random_state,
         )
 
-        # Threshold at (100 - percentile)-th percentile of scores so that
-        # the top `feature_percentile`% of features pass the cut
-        threshold = np.percentile(self.mi_scores_, 100.0 - self.feature_percentile)
+        max_score = self.mi_scores_.max()
+
+        if self.mi_fraction is not None:
+            # Adaptive mode: threshold = mi_fraction × max MI score
+            threshold = self.mi_fraction * max_score
+            mode_str = f"adaptive mi_fraction={self.mi_fraction:.3f}"
+        else:
+            # Percentile mode: fixed top-K%
+            threshold = np.percentile(self.mi_scores_, 100.0 - self.feature_percentile)
+            mode_str = f"percentile={self.feature_percentile:.1f}%"
+
         self.selected_indices_ = np.sort(
             np.where(self.mi_scores_ >= threshold)[0]
         ).astype(np.int64)
 
+        kept_pct = 100.0 * len(self.selected_indices_) / self.n_features_in_
         logger.info(
-            "MIBIF: %d -> %d features kept  "
-            "(top %.1f%%, score threshold = %.5f,  "
-            "score range [%.5f, %.5f])",
+            "MIBIF [%s]: %d → %d features kept (%.1f%%)  "
+            "score threshold=%.5f  range=[%.5f, %.5f]",
+            mode_str,
             self.n_features_in_,
             len(self.selected_indices_),
-            self.feature_percentile,
+            kept_pct,
             threshold,
             self.mi_scores_.min(),
-            self.mi_scores_.max(),
+            max_score,
         )
         return self
 
