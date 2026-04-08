@@ -35,7 +35,8 @@ echo "  Node:    $(hostname)"
 echo "  Start:   $(date)"
 echo "=============================================="
 
-mkdir -p /local_scratch/${USER}
+unset SINGULARITY_BIND
+unset APPTAINER_BIND
 
 source "${PROJECT_DIR}/.venv/bin/activate"
 export PYTHONPATH="${PROJECT_DIR}:${PYTHONPATH:-}"
