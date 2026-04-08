@@ -94,7 +94,7 @@ python main.py train \
     --early-stopping-warmup 100 \
     --spiking-prob 0.7 \
     --feature-selection-method mibif \
-    --feature-percentile 50.0 \
+    --feature-percentile 70.0 \
     --results-dir Results
 
 EXIT_CODE=$?
