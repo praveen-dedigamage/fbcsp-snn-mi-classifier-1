@@ -41,6 +41,7 @@ from sklearn.model_selection import StratifiedKFold, StratifiedShuffleSplit
 
 from fbcsp_snn import DEVICE, setup_logger
 from fbcsp_snn.band_selection import select_bands
+from fbcsp_snn.baseline import extract_logvar, run_baseline_classifiers
 from fbcsp_snn.config import Config
 from fbcsp_snn.datasets import DATASET_REGISTRY, get_n_classes, load_moabb
 from fbcsp_snn.data import load_hdf5
@@ -222,6 +223,19 @@ def _run_single_fold(
     X_norm_val = znorm.transform(X_concat_val)
     X_norm_te  = znorm.transform(X_concat_te)
 
+    # ---- Classical baseline (log-var + LDA / SVM) --------------------------
+    # Runs on the same z-normalised features as the SNN, before spike encoding.
+    # Results are stored in pipeline_params.json for direct comparison.
+    logger.info("Fold %d  running classical baselines (LDA, SVM) …", fold_idx)
+    bl_feat_tr  = extract_logvar(X_norm_tr)
+    bl_feat_val = extract_logvar(X_norm_val)
+    bl_feat_te  = extract_logvar(X_norm_te)
+    baseline_results = run_baseline_classifiers(
+        bl_feat_tr,  y_f_tr_0,
+        bl_feat_val, y_f_val_0,
+        bl_feat_te,  y_test_0,
+    )
+
     # ---- Spike encoding ----
     spikes_tr  = _spikes_from_concat(X_norm_tr,  cfg)
     spikes_val = _spikes_from_concat(X_norm_val, cfg)
@@ -358,6 +372,11 @@ def _run_single_fold(
         "val_acc_int8":       round(val_acc_int8, 6),
         "test_acc_fp32":      round(test_acc_fp32, 6),
         "test_acc_int8":      round(test_acc_int8, 6),
+        # Classical baselines (log-var features, same z-norm, no spike encoding)
+        "val_acc_lda":        round(baseline_results["val_acc_lda"],  6),
+        "test_acc_lda":       round(baseline_results["test_acc_lda"], 6),
+        "val_acc_svm":        round(baseline_results["val_acc_svm"],  6),
+        "test_acc_svm":       round(baseline_results["test_acc_svm"], 6),
     }
     with open(fold_dir / "pipeline_params.json", "w") as f:
         json.dump(params, f, indent=2)
@@ -623,6 +642,7 @@ def run_aggregate(cfg: Config) -> None:
     fieldnames = [
         "fold", "best_val_acc_fp32", "best_epoch", "stopped_epoch",
         "val_acc_fp32", "val_acc_int8", "test_acc_fp32", "test_acc_int8",
+        "val_acc_lda", "test_acc_lda", "val_acc_svm", "test_acc_svm",
     ]
     with open(csv_path, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
@@ -643,6 +663,10 @@ def run_aggregate(cfg: Config) -> None:
         "val_acc_int8":      round(float(np.mean(_col("val_acc_int8"))),  6),
         "test_acc_fp32":     round(float(np.mean(_col("test_acc_fp32"))), 6),
         "test_acc_int8":     round(float(np.mean(_col("test_acc_int8"))), 6),
+        "val_acc_lda":       round(float(np.mean(_col("val_acc_lda"))),   6) if _col("val_acc_lda")  else "",
+        "test_acc_lda":      round(float(np.mean(_col("test_acc_lda"))),  6) if _col("test_acc_lda") else "",
+        "val_acc_svm":       round(float(np.mean(_col("val_acc_svm"))),   6) if _col("val_acc_svm")  else "",
+        "test_acc_svm":      round(float(np.mean(_col("test_acc_svm"))),  6) if _col("test_acc_svm") else "",
     }
     with open(csv_path, "a", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
@@ -653,25 +677,27 @@ def run_aggregate(cfg: Config) -> None:
     # Log table to stdout
     logger.info("")
     logger.info(
-        "  %-6s  %-14s  %-12s  %-12s",
-        "Fold", "BestValFP32", "TestFP32", "TestINT8",
+        "  %-6s  %-12s  %-12s  %-10s  %-10s",
+        "Fold", "TestFP32", "TestINT8", "LDA", "SVM",
     )
-    logger.info("  " + "-" * 50)
+    logger.info("  " + "-" * 58)
     for r in rows:
         logger.info(
-            "  %-6s  %-14.1f  %-12.1f  %-12.1f",
+            "  %-6s  %-12.1f  %-12.1f  %-10.1f  %-10.1f",
             r["fold"],
-            r["best_val_acc_fp32"] * 100,
-            r["test_acc_fp32"]     * 100,
-            r["test_acc_int8"]     * 100,
+            r["test_acc_fp32"]  * 100,
+            r["test_acc_int8"]  * 100,
+            r.get("test_acc_lda", 0) * 100,
+            r.get("test_acc_svm", 0) * 100,
         )
-    logger.info("  " + "-" * 50)
+    logger.info("  " + "-" * 58)
     logger.info(
-        "  %-6s  %-14.1f  %-12.1f  %-12.1f",
+        "  %-6s  %-12.1f  %-12.1f  %-10.1f  %-10.1f",
         "MEAN",
-        mean_row["best_val_acc_fp32"] * 100,   # type: ignore[operator]
-        mean_row["test_acc_fp32"]     * 100,   # type: ignore[operator]
-        mean_row["test_acc_int8"]     * 100,   # type: ignore[operator]
+        mean_row["test_acc_fp32"]  * 100,   # type: ignore[operator]
+        mean_row["test_acc_int8"]  * 100,   # type: ignore[operator]
+        (mean_row["test_acc_lda"]  * 100) if mean_row.get("test_acc_lda") else 0.0,
+        (mean_row["test_acc_svm"]  * 100) if mean_row.get("test_acc_svm") else 0.0,
     )
 
     # ---- Aggregated confusion matrix ----

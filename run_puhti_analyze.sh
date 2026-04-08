@@ -61,21 +61,31 @@ for s in subjects:
     mean = statistics.mean(vals)
     std  = statistics.stdev(vals) if len(vals) > 1 else 0.0
     fp32_all.extend(vals)
-    rows.append((s, mean, std, len(vals)))
+    lda_vals = [float(r["test_acc_lda"]) * 100 for r in folds if r.get("test_acc_lda")]
+    svm_vals = [float(r["test_acc_svm"]) * 100 for r in folds if r.get("test_acc_svm")]
+    lda_mean = statistics.mean(lda_vals) if lda_vals else None
+    svm_mean = statistics.mean(svm_vals) if svm_vals else None
+    rows.append((s, mean, std, len(vals), lda_mean, svm_mean))
 
-print(f"  {'Subject':<10} {'Mean FP32':>10} {'Std':>8} {'Folds':>6}")
-print(f"  {'-'*38}")
-for s, mean, std, n in rows:
-    print(f"  S{s:<9} {mean:>9.1f}%  {std:>6.1f}  {n:>5}")
-print(f"  {'-'*38}")
+print(f"  {'Subject':<10} {'SNN FP32':>10} {'LDA':>8} {'SVM':>8} {'Folds':>6}")
+print(f"  {'-'*48}")
+for s, mean, std, n, lda, svm in rows:
+    lda_str = f"{lda:>7.1f}%" if lda is not None else "    N/A"
+    svm_str = f"{svm:>7.1f}%" if svm is not None else "    N/A"
+    print(f"  S{s:<9} {mean:>9.1f}%  {lda_str}  {svm_str}  {n:>5}")
+print(f"  {'-'*48}")
 if fp32_all:
     grand_mean = statistics.mean(fp32_all)
     grand_std  = statistics.stdev(fp32_all) if len(fp32_all) > 1 else 0.0
-    print(f"  {'Mean':<10} {grand_mean:>9.1f}%  {grand_std:>6.1f}")
+    lda_vals_all = [r[3] for r in rows if r[3] is not None]
+    svm_vals_all = [r[4] for r in rows if r[4] is not None]
+    lda_grand = f"{statistics.mean(lda_vals_all):>7.1f}%" if lda_vals_all else "    N/A"
+    svm_grand = f"{statistics.mean(svm_vals_all):>7.1f}%" if svm_vals_all else "    N/A"
+    print(f"  {'Mean':<10} {grand_mean:>9.1f}%  {lda_grand}  {svm_grand}")
     print()
     gap = 70.0 - grand_mean
     status = "TARGET MET ✓" if gap <= 0 else f"{gap:.1f}pp below target (70%)"
-    print(f"  Status: {status}")
+    print(f"  SNN Status: {status}")
 PYEOF
 
 echo ""
