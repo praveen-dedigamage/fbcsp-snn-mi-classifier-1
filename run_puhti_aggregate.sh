@@ -35,6 +35,8 @@ echo "  Node:    $(hostname)"
 echo "  Start:   $(date)"
 echo "=============================================="
 
+mkdir -p /local_scratch/${USER}
+
 source "${PROJECT_DIR}/.venv/bin/activate"
 export PYTHONPATH="${PROJECT_DIR}:${PYTHONPATH:-}"
 export MNE_DATA=/scratch/project_2003397/praveen/mne_data

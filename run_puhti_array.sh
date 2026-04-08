@@ -51,6 +51,11 @@ echo "  Start:   $(date)"
 echo "  Dir:     ${PROJECT_DIR}"
 echo "=============================================="
 
+# ---- Local scratch (Singularity bind fix) ---------------------------------
+# Puhti GPU nodes provide /local_scratch/<user> as fast NVMe storage.
+# Singularity tries to bind this path before it exists — create it first.
+mkdir -p /local_scratch/${USER}
+
 # ---- Environment ----------------------------------------------------------
 module purge
 source "${PROJECT_DIR}/.venv/bin/activate"
