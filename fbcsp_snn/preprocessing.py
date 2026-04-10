@@ -645,9 +645,22 @@ def _solve_csp(
         eigenvectors (high eigenvalue → maximise class-A variance).
     """
     composite = cov_a + cov_b
-    # eigh returns eigenvalues ascending, eigenvectors as columns
-    _, W = eigh(cov_a, composite)
-    return np.concatenate([W[:, :m], W[:, -m:]], axis=1)
+    n = composite.shape[0]
+    # Progressively increase regularisation until composite is strictly PD.
+    # Required when short windows produce near-rank-deficient covariances
+    # (e.g. 1 s EEG windows with 22 channels under heavy autocorrelation).
+    for eps in (0.0, 1e-8, 1e-6, 1e-4, 1e-2):
+        try:
+            _, W = eigh(cov_a, composite + eps * np.eye(n))
+            if eps > 0:
+                logger.debug("_solve_csp: added eps=%.0e to composite for PD", eps)
+            return np.concatenate([W[:, :m], W[:, -m:]], axis=1)
+        except np.linalg.LinAlgError:
+            continue
+    raise RuntimeError(
+        "_solve_csp: composite covariance not positive definite after "
+        "regularisation up to 1e-2. Use longer windows or larger --lambda-r."
+    )
 
 
 # ---------------------------------------------------------------------------
