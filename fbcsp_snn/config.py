@@ -155,7 +155,16 @@ def _parse_freq_bands(value: str) -> List[Tuple[float, float]]:
 
 
 def _parse_band_range(value: str) -> Tuple[float, float]:
-    """Parse a string like ``"(4.0,30.0)"`` into a ``(lo, hi)`` tuple."""
+    """Parse a band-range string into a ``(lo, hi)`` tuple.
+
+    Accepts three formats:
+    - ``"4.0:30.0"``    — colon-separated (shell-safe, SLURM --export safe)
+    - ``"(4.0,30.0)"``  — tuple literal
+    - ``"[4.0,30.0]"``  — list literal
+    """
+    if ":" in value:
+        parts = value.split(":")
+        return (float(parts[0]), float(parts[1]))
     import ast
     lo, hi = ast.literal_eval(value)
     return (float(lo), float(hi))
