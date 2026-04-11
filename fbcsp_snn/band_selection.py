@@ -19,7 +19,8 @@ import logging
 from typing import List, Tuple
 
 import numpy as np
-from scipy.signal import welch
+from scipy.ndimage import uniform_filter1d
+from scipy.signal import find_peaks, welch
 
 from fbcsp_snn import setup_logger
 
@@ -90,6 +91,134 @@ def select_bands(
 
     logger.info("Selected %d bands: %s", len(selected), selected)
     return selected, fisher_freqs, fisher_curve
+
+
+def select_bands_peak(
+    X: np.ndarray,
+    y: np.ndarray,
+    sfreq: float,
+    n_bands: int = 6,
+    bandwidth: float = 4.0,
+    band_range: Tuple[float, float] = (4.0, 40.0),
+    min_peak_distance_hz: float = 2.0,
+    min_fisher_fraction: float = 0.05,
+) -> Tuple[List[Tuple[float, float]], np.ndarray, np.ndarray]:
+    """Select bands by centering them on local Fisher-ratio peaks.
+
+    Unlike :func:`select_bands`, which scores a fixed dense grid and enforces
+    a maximum overlap constraint, this function:
+
+    1. Finds local maxima (peaks) in the Fisher discriminant ratio curve.
+    2. Centers a band of *bandwidth* Hz on each peak.
+    3. Allows full overlap between bands — two peaks close together will
+       produce partially overlapping bands, which is intentional because
+       both capture genuinely discriminative signal.
+
+    A light 2 Hz moving-average smooth is applied before peak detection to
+    suppress noisy micro-peaks without shifting the true peak centres.
+
+    Parameters
+    ----------
+    X : np.ndarray
+        EEG data, shape ``(n_trials, n_channels, n_samples)``.
+    y : np.ndarray
+        Class labels (1-indexed), shape ``(n_trials,)``.
+    sfreq : float
+        Sampling frequency in Hz.
+    n_bands : int
+        Maximum number of bands to select.
+    bandwidth : float
+        Width of each band centred on a peak, in Hz.
+    band_range : Tuple[float, float]
+        ``(f_min, f_max)`` search range in Hz.
+    min_peak_distance_hz : float
+        Minimum separation between two selected peak centres in Hz.
+        Prevents the algorithm from picking two peaks on the same ERD
+        feature that happen to sit adjacent frequency bins.
+    min_fisher_fraction : float
+        Minimum Fisher score as a fraction of the top-peak score.
+        Peaks below ``top_score * min_fisher_fraction`` are dropped,
+        preventing noise bumps from being used as bands.
+
+    Returns
+    -------
+    selected_bands : List[Tuple[float, float]]
+        ``(lo, hi)`` band boundaries sorted by centre frequency.
+    fisher_freqs : np.ndarray
+        Frequency axis for the Fisher curve.
+    fisher_curve : np.ndarray
+        Fisher discriminant ratio per frequency bin.
+    """
+    fisher_freqs, fisher_curve = _compute_fisher_curve(X, y, sfreq)
+
+    fmin, fmax = band_range
+    mask = (fisher_freqs >= fmin) & (fisher_freqs <= fmax)
+    f    = fisher_freqs[mask]
+    v    = fisher_curve[mask]
+
+    if len(f) < 2:
+        logger.warning("select_bands_peak: fewer than 2 frequency bins in range %s", band_range)
+        return [(fmin, fmin + bandwidth)], fisher_freqs, fisher_curve
+
+    freq_res = float(f[1] - f[0])              # Hz per bin
+
+    # Light smoothing to merge adjacent micro-peaks (~2 Hz window)
+    smooth_bins = max(1, round(2.0 / freq_res))
+    v_smooth    = uniform_filter1d(v, size=smooth_bins)
+
+    # Minimum inter-peak distance in bins
+    dist_bins = max(1, round(min_peak_distance_hz / freq_res))
+
+    peak_idxs, _ = find_peaks(v_smooth, distance=dist_bins)
+
+    if len(peak_idxs) == 0:
+        # Perfectly flat curve (e.g. non-responder subject) — use global max
+        logger.warning(
+            "select_bands_peak: no local peaks found in Fisher curve — "
+            "using global maximum as single peak."
+        )
+        peak_idxs = np.array([int(np.argmax(v_smooth))])
+
+    # Rank peaks by original (un-smoothed) Fisher value
+    peak_idxs = peak_idxs[np.argsort(v[peak_idxs])[::-1]]
+
+    # Drop peaks below relative Fisher threshold
+    threshold = float(v[peak_idxs[0]]) * min_fisher_fraction
+    peak_idxs = peak_idxs[v[peak_idxs] >= threshold]
+
+    if len(peak_idxs) < n_bands:
+        logger.warning(
+            "select_bands_peak: only %d peaks above threshold (requested %d).",
+            len(peak_idxs), n_bands,
+        )
+
+    # Take top-n_bands peaks
+    peak_idxs = peak_idxs[:n_bands]
+
+    # Build bands: centre ± bandwidth/2, clipped to band_range
+    half = bandwidth / 2.0
+    bands: List[Tuple[float, float]] = []
+    for pidx in peak_idxs:
+        centre = float(f[pidx])
+        lo = max(fmin, centre - half)
+        hi = min(fmax, centre + half)
+        # Ensure minimum width (edge case: centre near fmin or fmax)
+        if hi - lo < bandwidth * 0.5:
+            if lo == fmin:
+                hi = min(fmax, lo + bandwidth)
+            else:
+                lo = max(fmin, hi - bandwidth)
+        bands.append((round(lo, 2), round(hi, 2)))
+
+    # Sort by centre frequency (ascending) for reproducible display
+    bands.sort(key=lambda b: (b[0] + b[1]) / 2.0)
+
+    logger.info(
+        "Peak-based band selection: %d bands centred on Fisher peaks "
+        "(bandwidth=%.1f Hz, overlap allowed): %s",
+        len(bands), bandwidth, bands,
+    )
+    return bands, fisher_freqs, fisher_curve
 
 
 # ---------------------------------------------------------------------------

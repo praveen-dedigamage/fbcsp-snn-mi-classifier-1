@@ -40,7 +40,7 @@ import torch
 from sklearn.model_selection import StratifiedKFold, StratifiedShuffleSplit
 
 from fbcsp_snn import DEVICE, setup_logger
-from fbcsp_snn.band_selection import select_bands
+from fbcsp_snn.band_selection import select_bands, select_bands_peak
 from fbcsp_snn.baseline import extract_logvar, run_baseline_classifiers
 from fbcsp_snn.config import Config
 from fbcsp_snn.datasets import DATASET_REGISTRY, get_n_classes, load_moabb
@@ -176,7 +176,19 @@ def _run_single_fold(
     m = cfg.csp_components_per_band // 2   # filters per end
 
     # ---- Band selection ----
-    if cfg.adaptive_bands:
+    if cfg.peak_band_selection:
+        # Fisher-peak mode: centre one band on each local maximum of the
+        # Fisher curve; overlap between bands is explicitly allowed.
+        bands, fisher_freqs, fisher_curve = select_bands_peak(
+            X_f_tr, y_f_tr, sfreq=sfreq,
+            n_bands=cfg.n_adaptive_bands,
+            bandwidth=cfg.bandwidth,
+            band_range=cfg.band_range,
+            min_peak_distance_hz=cfg.peak_min_distance_hz,
+            min_fisher_fraction=cfg.min_fisher_fraction,
+        )
+    elif cfg.adaptive_bands:
+        # Dense-grid greedy mode (current default).
         bands, fisher_freqs, fisher_curve = select_bands(
             X_f_tr, y_f_tr, sfreq=sfreq,
             n_bands=cfg.n_adaptive_bands,

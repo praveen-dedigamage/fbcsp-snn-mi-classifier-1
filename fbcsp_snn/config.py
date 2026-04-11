@@ -99,6 +99,8 @@ class Config:
     band_step: float = 2.0
     band_range: Tuple[float, float] = (4.0, 40.0)
     min_fisher_fraction: float = 0.15
+    peak_band_selection: bool = False
+    peak_min_distance_hz: float = 2.0
 
     # CSP
     csp_components_per_band: int = 8
@@ -196,6 +198,12 @@ def build_parser() -> argparse.ArgumentParser:
                          help="Min Fisher score as fraction of top band score (default 0.05).")
     train_p.add_argument("--bandwidth", type=float, default=4.0)
     train_p.add_argument("--band-step", type=float, default=2.0)
+    train_p.add_argument("--peak-band-selection", dest="peak_band_selection",
+                         action="store_true", default=False,
+                         help="Select bands by centering on Fisher-ratio peaks "
+                              "(overlap allowed) instead of the dense-grid greedy method.")
+    train_p.add_argument("--peak-min-distance-hz", type=float, default=2.0,
+                         help="Minimum separation between peak centres in Hz (default 2.0).")
     train_p.add_argument("--csp-components-per-band", type=int, default=4)
     train_p.add_argument("--lambda-r", type=float, default=0.0001)
     train_p.add_argument("--euclidean-alignment", action="store_true", default=True)
@@ -282,6 +290,7 @@ def config_from_args(args: argparse.Namespace) -> Config:
     optional_fields = [
         "n_folds", "fold", "val_fraction", "adaptive_bands", "n_adaptive_bands", "freq_bands",
         "band_range", "bandwidth", "band_step", "min_fisher_fraction",
+        "peak_band_selection", "peak_min_distance_hz",
         "csp_components_per_band", "lambda_r", "euclidean_alignment", "riemannian_mean", "csp_ledoit_wolf",
         "augment_windows", "window_duration", "window_step",
         "base_thresh", "adapt_inc", "decay",
