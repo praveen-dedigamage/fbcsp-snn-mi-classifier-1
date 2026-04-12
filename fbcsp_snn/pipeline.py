@@ -779,6 +779,7 @@ def run_aggregate(cfg: Config) -> None:
 
         bands   = [tuple(b) for b in params["bands"]]
         n_input = params["n_input_features"]
+        is_chspec = params.get("channel_specific_bands", False)
 
         # Load preprocessing
         try:
@@ -796,7 +797,17 @@ def run_aggregate(cfg: Config) -> None:
             with open(mibif_path, "rb") as f:
                 mibif = pickle.load(f)
 
-        X_bands = apply_filter_bank(X_test, bands, sfreq, order=4)
+        if is_chspec:
+            ch_freqs_path = fold_dir / "channel_freqs.npy"
+            if not ch_freqs_path.exists():
+                logger.warning("channel_freqs.npy missing for fold %s — skip", fold_idx)
+                continue
+            channel_freqs = np.load(ch_freqs_path)
+            X_bands = apply_channel_specific_filterbank(
+                X_test, channel_freqs, cfg.bandwidth, sfreq
+            )
+        else:
+            X_bands = apply_filter_bank(X_test, bands, sfreq, order=4)
         proj    = csp.transform(X_bands)
         X_concat = _concat_projections(proj)
         X_norm  = znorm.transform(X_concat)
