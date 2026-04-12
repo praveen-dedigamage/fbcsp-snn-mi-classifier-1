@@ -324,6 +324,8 @@ def select_channel_specific_bands(
 
     channel_freqs = np.zeros((n_channels, n_bands), dtype=np.float32)
 
+    desc_all = np.argsort(fisher_smooth, axis=1)[:, ::-1]   # pre-sort once
+
     for c in range(n_channels):
         curve = fisher_smooth[c]
         peak_idx, _ = find_peaks(curve, distance=min_dist_bins)
@@ -335,14 +337,40 @@ def select_channel_specific_bands(
         else:
             selected = []
 
-        # Fill remaining slots greedily with highest-valued non-overlapping bins
+        selected_set: set = set(selected)
+
+        # Pass 1: fill remaining slots with non-overlapping high-Fisher bins
         if len(selected) < n_bands:
-            for idx in np.argsort(curve)[::-1]:
+            for idx in desc_all[c]:
                 if len(selected) >= n_bands:
                     break
-                too_close = any(abs(int(idx) - s) < min_dist_bins for s in selected)
-                if not too_close:
-                    selected.append(int(idx))
+                i = int(idx)
+                if i not in selected_set:
+                    too_close = any(abs(i - s) < min_dist_bins for s in selected_set)
+                    if not too_close:
+                        selected.append(i)
+                        selected_set.add(i)
+
+        # Pass 2: relax overlap constraint for any still-unfilled slots.
+        # This happens when n_bands × bandwidth > band_range width, i.e. the
+        # range is too narrow to hold n_bands non-overlapping bands.  Rather
+        # than leaving slots at 0.0 Hz (which produces degenerate filters),
+        # we pick the next-best bins regardless of proximity.
+        if len(selected) < n_bands:
+            logger.warning(
+                "Channel %d: only %d non-overlapping slots fit in [%.1f, %.1f] Hz "
+                "(n_bands=%d, bw=%.1f Hz) — filling %d remaining slots without "
+                "overlap constraint.",
+                c, len(selected), lo_hz, hi_hz, n_bands, bandwidth,
+                n_bands - len(selected),
+            )
+            for idx in desc_all[c]:
+                if len(selected) >= n_bands:
+                    break
+                i = int(idx)
+                if i not in selected_set:
+                    selected.append(i)
+                    selected_set.add(i)
 
         for slot, idx in enumerate(selected[:n_bands]):
             channel_freqs[c, slot] = float(freqs_r[idx])

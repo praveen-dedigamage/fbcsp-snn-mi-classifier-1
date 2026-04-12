@@ -717,7 +717,7 @@ def _solve_csp(
     # Progressively increase regularisation until composite is strictly PD.
     # Required when short windows produce near-rank-deficient covariances
     # (e.g. 1 s EEG windows with 22 channels under heavy autocorrelation).
-    for eps in (0.0, 1e-8, 1e-6, 1e-4, 1e-2):
+    for eps in (0.0, 1e-8, 1e-6, 1e-4, 1e-2, 0.1):
         try:
             _, W = eigh(cov_a, composite + eps * np.eye(n))
             if eps > 0:
@@ -727,7 +727,7 @@ def _solve_csp(
             continue
     raise RuntimeError(
         "_solve_csp: composite covariance not positive definite after "
-        "regularisation up to 1e-2. Use longer windows or larger --lambda-r."
+        "regularisation up to 0.1. Use longer windows or larger --lambda-r."
     )
 
 
