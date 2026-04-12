@@ -128,6 +128,7 @@ class Config:
     population_per_class: int = 20
     beta: float = 0.95
     dropout_prob: float = 0.5
+    recurrent_hidden: bool = False
 
     # Training
     lr: float = 1e-3
@@ -268,6 +269,10 @@ def build_parser() -> argparse.ArgumentParser:
     train_p.add_argument("--population-per-class", type=int, default=20)
     train_p.add_argument("--beta", type=float, default=0.95)
     train_p.add_argument("--dropout-prob", type=float, default=0.5)
+    train_p.add_argument("--recurrent-hidden", dest="recurrent_hidden",
+                         action="store_true", default=False,
+                         help="Replace hidden LIF with RLeaky: adds learnable "
+                              "(n_hidden × n_hidden) lateral spike-feedback matrix.")
     train_p.add_argument("--lr", type=float, default=1e-3)
     train_p.add_argument("--weight-decay", type=float, default=0.1)
     train_p.add_argument("--epochs", type=int, default=1000)
@@ -333,7 +338,7 @@ def config_from_args(args: argparse.Namespace) -> Config:
         "augment_windows", "window_duration", "window_step",
         "freq_shift_augment", "freq_shift_hz",
         "base_thresh", "adapt_inc", "decay",
-        "hidden_neurons", "population_per_class", "beta", "dropout_prob",
+        "hidden_neurons", "population_per_class", "beta", "dropout_prob", "recurrent_hidden",
         "lr", "weight_decay", "epochs", "early_stopping_patience",
         "early_stopping_warmup", "spiking_prob",
         "feature_selection_method", "feature_percentile", "mi_fraction",

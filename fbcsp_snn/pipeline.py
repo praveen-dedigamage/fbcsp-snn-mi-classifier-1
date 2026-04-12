@@ -345,6 +345,7 @@ def _run_single_fold(
         population_per_class=cfg.population_per_class,
         beta=cfg.beta,
         dropout_prob=cfg.dropout_prob,
+        recurrent_hidden=cfg.recurrent_hidden,
     ).to(DEVICE))
 
     result = train_fold(
@@ -443,6 +444,7 @@ def _run_single_fold(
         "hidden_neurons":     cfg.hidden_neurons,
         "population_per_class": cfg.population_per_class,
         "beta":               cfg.beta,
+        "recurrent_hidden":   cfg.recurrent_hidden,
         "feature_method":     cfg.feature_selection_method,
         "feature_percentile": cfg.feature_percentile,
         "mi_fraction":        cfg.mi_fraction,
@@ -848,6 +850,7 @@ def run_aggregate(cfg: Config) -> None:
             population_per_class=params.get("population_per_class", cfg.population_per_class),
             beta=params.get("beta", cfg.beta),
             dropout_prob=0.0,
+            recurrent_hidden=params.get("recurrent_hidden", False),
         ).to(DEVICE)
         state = torch.load(model_path, map_location=DEVICE)
         model.load_state_dict(state)

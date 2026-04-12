@@ -1,7 +1,7 @@
 """2-layer LIF Spiking Neural Network with population-coded output.
 
-Architecture
-------------
+Architecture — standard (recurrent_hidden=False)
+-------------------------------------------------
 ::
 
     Input (T, batch, n_input)
@@ -13,6 +13,25 @@ Architecture
         cur2 = drop2(cur2)                     # Dropout
         spk2, mem2 = lif2(cur2, mem2)          # LIF
       stack spk2, mem2 → (T, batch, n_output)
+
+Architecture — recurrent hidden (recurrent_hidden=True)
+--------------------------------------------------------
+::
+
+    Input (T, batch, n_input)
+      spk1 = zeros(batch, n_hidden)            # recurrent spike state
+      for t in 0 .. T-1:
+        cur1 = fc1(x[t])                       # Linear(n_input, n_hidden)
+        cur1 = drop1(cur1)                     # Dropout
+        spk1, mem1 = rlif1(cur1, spk1, mem1)  # RLeaky: mem += W_rec @ spk1_prev
+        cur2 = fc2(spk1)                       # Linear(n_hidden, n_output)
+        cur2 = drop2(cur2)                     # Dropout
+        spk2, mem2 = lif2(cur2, mem2)          # LIF (output unchanged)
+      stack spk2, mem2 → (T, batch, n_output)
+
+The recurrent weight matrix W_rec is (n_hidden × n_hidden), learnable.
+Only the hidden layer is made recurrent; the output population layer
+remains a standard LIF (recurrent feedback on a read-out is not useful).
 
 Output neurons are arranged in *n_classes* populations of *population_per_class*
 neurons each.  During inference, spikes are summed over time and over each
@@ -57,11 +76,18 @@ class SNNClassifier(nn.Module):
         LIF membrane potential decay factor (shared across both layers).
     dropout_prob : float
         Dropout probability applied after each linear layer.
+    recurrent_hidden : bool
+        If ``True``, replace the hidden LIF with a recurrent LIF
+        (``snn.RLeaky``) that adds lateral spike feedback via a learnable
+        ``(n_hidden × n_hidden)`` weight matrix.  The output layer remains
+        a standard ``snn.Leaky``.  Default ``False``.
 
     Attributes
     ----------
     n_output : int
         Total output neurons (= ``n_classes * population_per_class``).
+    recurrent_hidden : bool
+        Whether the hidden layer uses recurrent connections.
     """
 
     def __init__(
@@ -72,6 +98,7 @@ class SNNClassifier(nn.Module):
         population_per_class: int = 20,
         beta: float = 0.95,
         dropout_prob: float = 0.5,
+        recurrent_hidden: bool = False,
     ) -> None:
         super().__init__()
 
@@ -80,15 +107,27 @@ class SNNClassifier(nn.Module):
         self.n_classes = n_classes
         self.population_per_class = population_per_class
         self.n_output = n_classes * population_per_class
+        self.recurrent_hidden = recurrent_hidden
 
         spike_grad = surrogate.fast_sigmoid(slope=25)
 
-        # Layer 1: Linear → Dropout → LIF
+        # Layer 1: Linear → Dropout → LIF (or RLeaky)
         self.fc1 = nn.Linear(n_input, n_hidden)
         self.drop1 = nn.Dropout(p=dropout_prob)
-        self.lif1 = snn.Leaky(beta=beta, spike_grad=spike_grad)
+        if recurrent_hidden:
+            # RLeaky: mem[t] = β·mem[t-1] + W_in·x[t] + W_rec·spk[t-1]
+            # all_to_all=True + linear_features creates W_rec as nn.Linear(n_hidden, n_hidden, bias=False)
+            self.lif1 = snn.RLeaky(
+                beta=beta,
+                spike_grad=spike_grad,
+                all_to_all=True,
+                linear_features=n_hidden,
+                learn_recurrent=True,
+            )
+        else:
+            self.lif1 = snn.Leaky(beta=beta, spike_grad=spike_grad)
 
-        # Layer 2: Linear → Dropout → LIF
+        # Layer 2: Linear → Dropout → LIF  (always standard — output read-out)
         self.fc2 = nn.Linear(n_hidden, self.n_output)
         self.drop2 = nn.Dropout(p=dropout_prob)
         self.lif2 = snn.Leaky(beta=beta, spike_grad=spike_grad)
@@ -96,9 +135,9 @@ class SNNClassifier(nn.Module):
         param_count = sum(p.numel() for p in self.parameters() if p.requires_grad)
         logger.info(
             "SNNClassifier — input: %d  hidden: %d  classes: %d  "
-            "pop/class: %d  output: %d  trainable params: %d",
+            "pop/class: %d  output: %d  recurrent_hidden: %s  trainable params: %d",
             n_input, n_hidden, n_classes, population_per_class,
-            self.n_output, param_count,
+            self.n_output, recurrent_hidden, param_count,
         )
 
     # ------------------------------------------------------------------
@@ -123,9 +162,15 @@ class SNNClassifier(nn.Module):
         mem_out : torch.Tensor
             Output membrane potential traces, shape ``(T, batch, n_output)``.
         """
-        T = x.shape[0]
-        mem1 = self.lif1.init_leaky()
+        T, batch, _ = x.shape
         mem2 = self.lif2.init_leaky()
+
+        if self.recurrent_hidden:
+            # RLeaky requires explicit (spk, mem) state initialisation
+            spk1 = torch.zeros(batch, self.n_hidden, device=x.device)
+            mem1 = torch.zeros(batch, self.n_hidden, device=x.device)
+        else:
+            mem1 = self.lif1.init_leaky()
 
         spk_out_list: list[torch.Tensor] = []
         mem_out_list: list[torch.Tensor] = []
@@ -133,8 +178,12 @@ class SNNClassifier(nn.Module):
         for t in range(T):
             # Layer 1
             cur1 = self.drop1(self.fc1(x[t]))
-            spk1, mem1 = self.lif1(cur1, mem1)
-            # Layer 2
+            if self.recurrent_hidden:
+                # spk1 from previous step is fed back through W_rec
+                spk1, mem1 = self.lif1(cur1, spk1, mem1)
+            else:
+                spk1, mem1 = self.lif1(cur1, mem1)
+            # Layer 2 (standard LIF read-out)
             cur2 = self.drop2(self.fc2(spk1))
             spk2, mem2 = self.lif2(cur2, mem2)
 
