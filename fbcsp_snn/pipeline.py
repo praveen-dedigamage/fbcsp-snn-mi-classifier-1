@@ -186,6 +186,7 @@ def _run_single_fold(
             band_range=cfg.band_range,
             min_peak_distance_hz=cfg.peak_min_distance_hz,
             min_fisher_fraction=cfg.min_fisher_fraction,
+            top_k_channels=cfg.top_k_channels,
         )
     elif cfg.adaptive_bands:
         # Dense-grid greedy mode (current default).
@@ -196,6 +197,7 @@ def _run_single_fold(
             step=cfg.band_step,
             band_range=cfg.band_range,
             min_fisher_fraction=cfg.min_fisher_fraction,
+            top_k_channels=cfg.top_k_channels,
         )
     else:
         bands = cfg.freq_bands

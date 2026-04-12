@@ -16,7 +16,7 @@ that no information from the validation / test split leaks into band selection.
 from __future__ import annotations
 
 import logging
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 import numpy as np
 from scipy.ndimage import uniform_filter1d
@@ -40,6 +40,7 @@ def select_bands(
     step: float = 2.0,
     band_range: Tuple[float, float] = (4.0, 40.0),
     min_fisher_fraction: float = 0.05,
+    top_k_channels: Optional[int] = None,
 ) -> Tuple[List[Tuple[float, float]], np.ndarray, np.ndarray]:
     """Select the best *n_bands* frequency bands from training data.
 
@@ -73,8 +74,14 @@ def select_bands(
         Frequency axis for the Fisher curve, shape ``(n_freqs,)``.
     fisher_curve : np.ndarray
         Fisher discriminant ratio at each frequency bin, shape ``(n_freqs,)``.
+    top_k_channels : int, optional
+        If set, rank channels by their peak Fisher ratio and average PSD
+        over only the top-K before computing the Fisher curve.  ``None``
+        (default) uses all channels — current behaviour.
     """
-    fisher_freqs, fisher_curve = _compute_fisher_curve(X, y, sfreq)
+    fisher_freqs, fisher_curve = _compute_fisher_curve(
+        X, y, sfreq, top_k_channels=top_k_channels
+    )
 
     candidates = _generate_candidates(bandwidth, step, band_range)
     logger.info(
@@ -102,6 +109,7 @@ def select_bands_peak(
     band_range: Tuple[float, float] = (4.0, 40.0),
     min_peak_distance_hz: float = 2.0,
     min_fisher_fraction: float = 0.05,
+    top_k_channels: Optional[int] = None,
 ) -> Tuple[List[Tuple[float, float]], np.ndarray, np.ndarray]:
     """Select bands by centering them on local Fisher-ratio peaks.
 
@@ -148,8 +156,13 @@ def select_bands_peak(
         Frequency axis for the Fisher curve.
     fisher_curve : np.ndarray
         Fisher discriminant ratio per frequency bin.
+    top_k_channels : int, optional
+        If set, rank channels by peak Fisher and average PSD over only the
+        top-K before computing the Fisher curve.  ``None`` uses all channels.
     """
-    fisher_freqs, fisher_curve = _compute_fisher_curve(X, y, sfreq)
+    fisher_freqs, fisher_curve = _compute_fisher_curve(
+        X, y, sfreq, top_k_channels=top_k_channels
+    )
 
     fmin, fmax = band_range
     mask = (fisher_freqs >= fmin) & (fisher_freqs <= fmax)
@@ -230,6 +243,7 @@ def _compute_fisher_curve(
     y: np.ndarray,
     sfreq: float,
     nperseg: int = 256,
+    top_k_channels: Optional[int] = None,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """Estimate PSD per trial, average over channels, compute Fisher ratio.
 
@@ -243,6 +257,10 @@ def _compute_fisher_curve(
         Sampling frequency.
     nperseg : int
         Welch segment length (clipped to ``n_samples`` if larger).
+    top_k_channels : int, optional
+        If set, rank channels by their peak Fisher ratio and average PSD
+        over only the top-K before computing the Fisher curve.  ``None``
+        uses all channels.
 
     Returns
     -------
@@ -258,12 +276,57 @@ def _compute_fisher_curve(
     X_2d = X.reshape(n_trials * n_channels, n_samples)
     freqs, psd_2d = welch(X_2d, fs=sfreq, nperseg=nperseg, axis=-1)
 
-    # Average PSD over channels → (n_trials, n_freqs)
-    psd = psd_2d.reshape(n_trials, n_channels, -1).mean(axis=1)
+    psd_3d = psd_2d.reshape(n_trials, n_channels, -1)  # (n_trials, n_ch, n_freqs)
+
+    if top_k_channels is not None and top_k_channels < n_channels:
+        # Rank channels by their peak Fisher ratio across frequency bins
+        fisher_per_ch = _fisher_ratio_per_channel(psd_3d, y)  # (n_ch, n_freqs)
+        ch_scores = fisher_per_ch.max(axis=1)                  # peak Fisher per channel
+        top_idx = np.argsort(ch_scores)[::-1][:top_k_channels]
+        logger.info(
+            "Top-%d channels for band selection (by peak Fisher): %s",
+            top_k_channels, top_idx.tolist(),
+        )
+        psd = psd_3d[:, top_idx, :].mean(axis=1)  # (n_trials, n_freqs)
+    else:
+        # Default: average over all channels
+        psd = psd_3d.mean(axis=1)  # (n_trials, n_freqs)
 
     fisher_curve = _fisher_ratio(psd, y)
 
     return freqs, fisher_curve
+
+
+def _fisher_ratio_per_channel(psd_3d: np.ndarray, y: np.ndarray) -> np.ndarray:
+    """Fisher discriminant ratio at each (channel, frequency) pair.
+
+    Parameters
+    ----------
+    psd_3d : np.ndarray
+        Shape ``(n_trials, n_channels, n_freqs)``.
+    y : np.ndarray
+        Class labels, shape ``(n_trials,)``.
+
+    Returns
+    -------
+    np.ndarray
+        Fisher ratio, shape ``(n_channels, n_freqs)``.  Never negative.
+    """
+    classes = np.unique(y)
+    mu_global = psd_3d.mean(axis=0).astype(np.float64)  # (n_ch, n_freqs)
+
+    s_b = np.zeros_like(mu_global, dtype=np.float64)
+    s_w = np.zeros_like(mu_global, dtype=np.float64)
+
+    for c in classes:
+        mask = y == c
+        n_c = int(mask.sum())
+        psd_c = psd_3d[mask].astype(np.float64)          # (n_c, n_ch, n_freqs)
+        mu_c = psd_c.mean(axis=0)                         # (n_ch, n_freqs)
+        s_b += n_c * (mu_c - mu_global) ** 2
+        s_w += np.sum((psd_c - mu_c) ** 2, axis=0)
+
+    return s_b / (s_w + 1e-30)
 
 
 def _fisher_ratio(psd: np.ndarray, y: np.ndarray) -> np.ndarray:
