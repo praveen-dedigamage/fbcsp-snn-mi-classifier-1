@@ -94,6 +94,8 @@ def load_moabb(
     dataset_name: str,
     subject_id: int,
     n_classes: Optional[int] = None,
+    tmin: float = 0.0,
+    tmax: float = 3.0,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Load a dataset from MOABB and return train/test splits.
 
@@ -109,6 +111,11 @@ def load_moabb(
         Subject to load (1-indexed, as used by MOABB).
     n_classes : Optional[int]
         Override the number of classes.  Defaults to the registry value.
+    tmin : float
+        Epoch start in seconds after cue onset (default 0.0).
+    tmax : float
+        Epoch end in seconds after cue onset (default 3.0).
+        Trial length = ``int((tmax - tmin) * sfreq)`` samples.
 
     Returns
     -------
@@ -193,7 +200,12 @@ def load_moabb(
             "MOABB paradigm not available. Ensure moabb>=1.1 is installed."
         ) from exc
 
-    paradigm = MotorImagery(n_classes=effective_n_classes)
+    n_samples_expected = int((tmax - tmin) * info["sfreq"])
+    logger.info(
+        "Epoch window: tmin=%.2f s  tmax=%.2f s  → %d samples at %d Hz",
+        tmin, tmax, n_samples_expected, info["sfreq"],
+    )
+    paradigm = MotorImagery(n_classes=effective_n_classes, tmin=tmin, tmax=tmax)
 
     logger.info("Fetching epochs via MOABB paradigm (this may download data)...")
     X_all, y_all, metadata = paradigm.get_data(

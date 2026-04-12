@@ -161,6 +161,87 @@ def apply_channel_specific_filterbank(
     return X_bands
 
 
+def apply_freq_shift_augmentation(
+    X_raw: np.ndarray,
+    X_bands: List[np.ndarray],
+    y: np.ndarray,
+    bands: List[Tuple[float, float]],
+    shift_hz: float,
+    sfreq: float,
+    band_range: Tuple[float, float] = (4.0, 40.0),
+    order: int = 4,
+) -> Tuple[List[np.ndarray], np.ndarray]:
+    """Augment CSP fitting data with frequency-shifted copies of each band.
+
+    Creates two additional filtered versions of the training data — one with
+    all bands shifted up by ``shift_hz`` and one shifted down — and
+    concatenates them with the originals along the trials axis.  The result
+    is 3× the training samples for CSP covariance estimation, making the
+    fitted spatial filters robust to small inter-session spectral drift
+    (the primary failure mode for weak subjects).
+
+    Only applied to the data used for CSP *fitting*; val and test data are
+    never touched.
+
+    Parameters
+    ----------
+    X_raw : np.ndarray
+        Unfiltered training EEG, shape ``(n_trials, n_channels, n_samples)``.
+    X_bands : List[np.ndarray]
+        Already-filtered original bands (avoids re-filtering at original
+        centre frequencies), one array per band.
+    y : np.ndarray
+        Class labels, shape ``(n_trials,)``.
+    bands : List[Tuple[float, float]]
+        Original ``(lo, hi)`` band boundaries in Hz.
+    shift_hz : float
+        Frequency shift magnitude in Hz.  Augmented copies are at
+        ``centre ± shift_hz``.
+    sfreq : float
+        Sampling frequency in Hz.
+    band_range : Tuple[float, float]
+        Hard frequency limits; shifted bands are clipped to this range.
+    order : int
+        Butterworth filter order.
+
+    Returns
+    -------
+    X_aug : List[np.ndarray]
+        Augmented filter bank; each array has shape
+        ``(3 * n_trials, n_channels, n_samples)``.
+    y_aug : np.ndarray
+        Replicated labels, shape ``(3 * n_trials,)``.
+    """
+    lo_lim, hi_lim = band_range
+
+    bands_up = [
+        (max(lo_lim, lo + shift_hz), min(hi_lim, hi + shift_hz))
+        for lo, hi in bands
+    ]
+    bands_dn = [
+        (max(lo_lim, lo - shift_hz), min(hi_lim, hi - shift_hz))
+        for lo, hi in bands
+    ]
+
+    X_up = apply_filter_bank(X_raw, bands_up, sfreq, order=order)
+    X_dn = apply_filter_bank(X_raw, bands_dn, sfreq, order=order)
+
+    X_aug = [
+        np.concatenate([X_bands[b], X_up[b], X_dn[b]], axis=0)
+        for b in range(len(bands))
+    ]
+    y_aug = np.tile(y, 3)
+
+    logger.info(
+        "Freq-shift augmentation: ±%.1f Hz → %d trials (%d × 3)  "
+        "bands_up=%s  bands_dn=%s",
+        shift_hz, len(y_aug), len(y),
+        [(round(lo, 1), round(hi, 1)) for lo, hi in bands_up],
+        [(round(lo, 1), round(hi, 1)) for lo, hi in bands_dn],
+    )
+    return X_aug, y_aug
+
+
 def window_filter_bank(
     X_bands: List[np.ndarray],
     y: np.ndarray,

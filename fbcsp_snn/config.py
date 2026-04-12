@@ -115,6 +115,8 @@ class Config:
     augment_windows: bool = False
     window_duration: float = 2.0   # seconds
     window_step: float = 0.5       # seconds → 75 % overlap at 250 Hz
+    freq_shift_augment: bool = False
+    freq_shift_hz: float = 2.0     # ± Hz shift for frequency-shift augmentation
 
     # Encoding
     base_thresh: float = 0.001
@@ -139,6 +141,10 @@ class Config:
     feature_selection_method: str = "mibif"
     feature_percentile: float = 50.0
     mi_fraction: Optional[float] = None   # adaptive mode: keep MI >= mi_fraction*max_MI
+
+    # Epoch window (passed to MOABB MotorImagery paradigm)
+    tmin: float = 0.0   # seconds after cue onset
+    tmax: float = 3.0   # seconds after cue onset
 
     # I/O
     results_dir: str = "Results"
@@ -196,6 +202,10 @@ def build_parser() -> argparse.ArgumentParser:
                          help="Validation fraction per fold (default 0.2 = 80/20 split).")
     train_p.add_argument("--fold", type=int, default=None,
                          help="Run only this fold (0-indexed).")
+    train_p.add_argument("--tmin", type=float, default=0.0,
+                         help="Epoch start in seconds after cue onset (default 0.0).")
+    train_p.add_argument("--tmax", type=float, default=3.0,
+                         help="Epoch end in seconds after cue onset (default 3.0).")
     train_p.add_argument("--adaptive-bands", action="store_true", default=True)
     train_p.add_argument("--no-adaptive-bands", dest="adaptive_bands",
                          action="store_false")
@@ -245,6 +255,12 @@ def build_parser() -> argparse.ArgumentParser:
     train_p.add_argument("--window-step", type=float, default=0.5,
                          help="Sliding window step in seconds (default 0.5 → "
                               "75%% overlap at 250 Hz).")
+    train_p.add_argument("--freq-shift-augment", dest="freq_shift_augment",
+                         action="store_true", default=False,
+                         help="Augment CSP fitting data with ±freq_shift_hz copies "
+                              "of each band to simulate inter-session spectral drift.")
+    train_p.add_argument("--freq-shift-hz", type=float, default=2.0,
+                         help="Frequency shift magnitude in Hz (default 2.0).")
     train_p.add_argument("--base-thresh", type=float, default=0.001)
     train_p.add_argument("--adapt-inc", type=float, default=0.6)
     train_p.add_argument("--decay", type=float, default=0.95)
@@ -308,12 +324,14 @@ def config_from_args(args: argparse.Namespace) -> Config:
 
     # mode-specific fields (all optional — Config has defaults)
     optional_fields = [
-        "n_folds", "fold", "val_fraction", "adaptive_bands", "n_adaptive_bands", "freq_bands",
+        "n_folds", "fold", "val_fraction", "tmin", "tmax",
+        "adaptive_bands", "n_adaptive_bands", "freq_bands",
         "band_range", "bandwidth", "band_step", "min_fisher_fraction",
         "peak_band_selection", "peak_min_distance_hz", "top_k_channels",
         "channel_specific_bands",
         "csp_components_per_band", "lambda_r", "euclidean_alignment", "riemannian_mean", "csp_ledoit_wolf",
         "augment_windows", "window_duration", "window_step",
+        "freq_shift_augment", "freq_shift_hz",
         "base_thresh", "adapt_inc", "decay",
         "hidden_neurons", "population_per_class", "beta", "dropout_prob",
         "lr", "weight_decay", "epochs", "early_stopping_patience",
