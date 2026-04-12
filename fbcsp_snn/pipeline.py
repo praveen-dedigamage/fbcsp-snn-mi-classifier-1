@@ -40,7 +40,7 @@ import torch
 from sklearn.model_selection import StratifiedKFold, StratifiedShuffleSplit
 
 from fbcsp_snn import DEVICE, setup_logger
-from fbcsp_snn.band_selection import select_bands, select_bands_peak
+from fbcsp_snn.band_selection import select_bands, select_bands_peak, select_channel_specific_bands
 from fbcsp_snn.baseline import extract_logvar, run_baseline_classifiers
 from fbcsp_snn.config import Config
 from fbcsp_snn.datasets import DATASET_REGISTRY, get_n_classes, load_moabb
@@ -49,7 +49,10 @@ from fbcsp_snn.encoding import encode_tensor
 from fbcsp_snn.evaluation import compute_accuracy, compute_confusion_matrix
 from fbcsp_snn.mibif import MIBIFSelector
 from fbcsp_snn.model import SNNClassifier, maybe_compile
-from fbcsp_snn.preprocessing import PairwiseCSP, ZNormaliser, apply_filter_bank, window_filter_bank
+from fbcsp_snn.preprocessing import (
+    PairwiseCSP, ZNormaliser,
+    apply_filter_bank, apply_channel_specific_filterbank, window_filter_bank,
+)
 from fbcsp_snn.quantization import quantize_model, quantization_report
 from fbcsp_snn.training import evaluate_model, train_fold
 from fbcsp_snn.visualization import (
@@ -175,47 +178,65 @@ def _run_single_fold(
 
     m = cfg.csp_components_per_band // 2   # filters per end
 
-    # ---- Band selection ----
-    if cfg.peak_band_selection:
-        # Fisher-peak mode: centre one band on each local maximum of the
-        # Fisher curve; overlap between bands is explicitly allowed.
-        bands, fisher_freqs, fisher_curve = select_bands_peak(
+    # ---- Band selection + filter bank ----
+    if cfg.channel_specific_bands:
+        # Approach B: each channel is filtered at its own Fisher-peak frequency.
+        # channel_freqs shape: (n_channels, n_adaptive_bands)
+        channel_freqs, fisher_per_ch_fold, fisher_freqs = select_channel_specific_bands(
             X_f_tr, y_f_tr, sfreq=sfreq,
             n_bands=cfg.n_adaptive_bands,
             bandwidth=cfg.bandwidth,
             band_range=cfg.band_range,
-            min_peak_distance_hz=cfg.peak_min_distance_hz,
-            min_fisher_fraction=cfg.min_fisher_fraction,
-            top_k_channels=cfg.top_k_channels,
         )
-    elif cfg.adaptive_bands:
-        # Dense-grid greedy mode (current default).
-        bands, fisher_freqs, fisher_curve = select_bands(
-            X_f_tr, y_f_tr, sfreq=sfreq,
-            n_bands=cfg.n_adaptive_bands,
-            bandwidth=cfg.bandwidth,
-            step=cfg.band_step,
-            band_range=cfg.band_range,
-            min_fisher_fraction=cfg.min_fisher_fraction,
-            top_k_channels=cfg.top_k_channels,
-        )
+        # For logging/plotting use the channel-averaged Fisher curve
+        fisher_curve = fisher_per_ch_fold.mean(axis=0)
+        bands: list = []          # no single shared band list in this mode
+        np.save(fold_dir / "channel_freqs.npy", channel_freqs)
+
+        X_bands_tr  = apply_channel_specific_filterbank(
+            X_f_tr,  channel_freqs, cfg.bandwidth, sfreq)
+        X_bands_val = apply_channel_specific_filterbank(
+            X_f_val, channel_freqs, cfg.bandwidth, sfreq)
+        X_bands_te  = apply_channel_specific_filterbank(
+            X_test,  channel_freqs, cfg.bandwidth, sfreq)
     else:
-        bands = cfg.freq_bands
-        fisher_freqs = np.array([0.0])
-        fisher_curve = np.array([0.0])
+        # Standard shared-band modes: peak, adaptive, or static.
+        if cfg.peak_band_selection:
+            bands, fisher_freqs, fisher_curve = select_bands_peak(
+                X_f_tr, y_f_tr, sfreq=sfreq,
+                n_bands=cfg.n_adaptive_bands,
+                bandwidth=cfg.bandwidth,
+                band_range=cfg.band_range,
+                min_peak_distance_hz=cfg.peak_min_distance_hz,
+                min_fisher_fraction=cfg.min_fisher_fraction,
+                top_k_channels=cfg.top_k_channels,
+            )
+        elif cfg.adaptive_bands:
+            bands, fisher_freqs, fisher_curve = select_bands(
+                X_f_tr, y_f_tr, sfreq=sfreq,
+                n_bands=cfg.n_adaptive_bands,
+                bandwidth=cfg.bandwidth,
+                step=cfg.band_step,
+                band_range=cfg.band_range,
+                min_fisher_fraction=cfg.min_fisher_fraction,
+                top_k_channels=cfg.top_k_channels,
+            )
+        else:
+            bands = cfg.freq_bands
+            fisher_freqs = np.array([0.0])
+            fisher_curve = np.array([0.0])
 
-    logger.info("Fold %d  bands: %s", fold_idx, bands)
+        logger.info("Fold %d  bands: %s", fold_idx, bands)
 
-    plot_band_selection(
-        fisher_freqs, fisher_curve, bands,
-        save_path=fold_dir / "band_selection.png",
-        title=f"Subject {cfg.subject_id} Fold {fold_idx} — Band Selection",
-    )
+        plot_band_selection(
+            fisher_freqs, fisher_curve, bands,
+            save_path=fold_dir / "band_selection.png",
+            title=f"Subject {cfg.subject_id} Fold {fold_idx} — Band Selection",
+        )
 
-    # ---- Filter bank ----
-    X_bands_tr  = apply_filter_bank(X_f_tr,  bands, sfreq, order=4)
-    X_bands_val = apply_filter_bank(X_f_val, bands, sfreq, order=4)
-    X_bands_te  = apply_filter_bank(X_test,  bands, sfreq, order=4)
+        X_bands_tr  = apply_filter_bank(X_f_tr,  bands, sfreq, order=4)
+        X_bands_val = apply_filter_bank(X_f_val, bands, sfreq, order=4)
+        X_bands_te  = apply_filter_bank(X_test,  bands, sfreq, order=4)
 
     # ---- Sliding-window augmentation (CSP fitting only) ----
     # Windows the filtered training bands to increase covariance sample count.
@@ -392,6 +413,7 @@ def _run_single_fold(
         "n_classes":          n_classes,
         "n_input_features":   n_input,
         "bands":              [[float(lo), float(hi)] for lo, hi in bands],
+        "channel_specific_bands": cfg.channel_specific_bands,
         "adaptive_bands":     cfg.adaptive_bands,
         "euclidean_alignment": cfg.euclidean_alignment,
         "riemannian_mean":    cfg.riemannian_mean,

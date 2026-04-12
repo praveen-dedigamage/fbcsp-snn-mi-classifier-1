@@ -93,6 +93,74 @@ def bandpass_filter(
     return X_filt_2d.reshape(n_trials, n_channels, n_samples).astype(np.float32)
 
 
+def apply_channel_specific_filterbank(
+    X: np.ndarray,
+    channel_freqs: np.ndarray,
+    bandwidth: float,
+    sfreq: float,
+    order: int = 4,
+) -> List[np.ndarray]:
+    """Apply a channel-specific bandpass filter bank to EEG data.
+
+    Unlike :func:`apply_filter_bank` (which applies the same global band to
+    every channel), this function filters each channel at its own
+    Fisher-peak centre frequency.  The output has the same structure —
+    a list of per-slot arrays — so it can be passed directly to
+    :class:`PairwiseCSP` without any other pipeline changes.
+
+    In band slot *b*, channel *c* is bandpassed at
+    ``[channel_freqs[c, b] - bandwidth/2, channel_freqs[c, b] + bandwidth/2]``.
+
+    Parameters
+    ----------
+    X : np.ndarray
+        Raw EEG, shape ``(n_trials, n_channels, n_samples)``.
+    channel_freqs : np.ndarray
+        Centre frequencies, shape ``(n_channels, n_bands)``, as returned by
+        :func:`~fbcsp_snn.band_selection.select_channel_specific_bands`.
+    bandwidth : float
+        Filter bandwidth in Hz (uniform across all channels and slots).
+    sfreq : float
+        Sampling frequency in Hz.
+    order : int
+        Butterworth filter order.
+
+    Returns
+    -------
+    List[np.ndarray]
+        ``n_bands`` filtered arrays, each shape
+        ``(n_trials, n_channels, n_samples)``.
+    """
+    n_trials, n_channels, n_samples = X.shape
+    n_bands = channel_freqs.shape[1]
+    half_bw = bandwidth / 2.0
+
+    X_bands: List[np.ndarray] = []
+    for b in range(n_bands):
+        X_band = np.empty((n_trials, n_channels, n_samples), dtype=np.float32)
+        for c in range(n_channels):
+            lo = float(channel_freqs[c, b]) - half_bw
+            hi = float(channel_freqs[c, b]) + half_bw
+            # Re-use existing bandpass_filter on a single-channel slice
+            # (n_trials, 1, n_samples) → (n_trials, 1, n_samples)
+            X_band[:, c, :] = bandpass_filter(
+                X[:, c : c + 1, :], lo, hi, sfreq, order=order
+            )[:, 0, :]
+        X_bands.append(X_band)
+        logger.debug(
+            "Channel-specific slot %d: centre range [%.1f – %.1f] Hz",
+            b,
+            float(channel_freqs[:, b].min()),
+            float(channel_freqs[:, b].max()),
+        )
+
+    logger.info(
+        "Channel-specific filter bank: %d slots × %d channels → %d filtered arrays",
+        n_bands, n_channels, n_bands,
+    )
+    return X_bands
+
+
 def window_filter_bank(
     X_bands: List[np.ndarray],
     y: np.ndarray,

@@ -102,6 +102,7 @@ class Config:
     peak_band_selection: bool = False
     peak_min_distance_hz: float = 2.0
     top_k_channels: Optional[int] = None
+    channel_specific_bands: bool = False
 
     # CSP
     csp_components_per_band: int = 8
@@ -218,6 +219,11 @@ def build_parser() -> argparse.ArgumentParser:
                          help="Use only the top-K most discriminative channels (by peak Fisher "
                               "ratio) when computing the Fisher curve for band selection. "
                               "None (default) uses all channels.")
+    train_p.add_argument("--channel-specific-bands", dest="channel_specific_bands",
+                         action="store_true", default=False,
+                         help="Approach B: filter each EEG channel at its own Fisher-peak "
+                              "centre frequency instead of a shared global band. Produces "
+                              "n_adaptive_bands channel-personalised filter-bank slots.")
     train_p.add_argument("--csp-components-per-band", type=int, default=4)
     train_p.add_argument("--lambda-r", type=float, default=0.0001)
     train_p.add_argument("--euclidean-alignment", action="store_true", default=True)
@@ -305,6 +311,7 @@ def config_from_args(args: argparse.Namespace) -> Config:
         "n_folds", "fold", "val_fraction", "adaptive_bands", "n_adaptive_bands", "freq_bands",
         "band_range", "bandwidth", "band_step", "min_fisher_fraction",
         "peak_band_selection", "peak_min_distance_hz", "top_k_channels",
+        "channel_specific_bands",
         "csp_components_per_band", "lambda_r", "euclidean_alignment", "riemannian_mean", "csp_ledoit_wolf",
         "augment_windows", "window_duration", "window_step",
         "base_thresh", "adapt_inc", "decay",

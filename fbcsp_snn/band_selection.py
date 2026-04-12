@@ -234,6 +234,138 @@ def select_bands_peak(
     return bands, fisher_freqs, fisher_curve
 
 
+def select_channel_specific_bands(
+    X: np.ndarray,
+    y: np.ndarray,
+    sfreq: float,
+    n_bands: int = 6,
+    bandwidth: float = 4.0,
+    band_range: Tuple[float, float] = (4.0, 40.0),
+    nperseg: int = 256,
+    smooth_hz: float = 2.0,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Find per-channel peak Fisher frequencies for channel-specific filtering.
+
+    Rather than selecting a single set of frequency bands shared by all
+    channels, this function identifies the top-``n_bands`` discriminative
+    frequency peaks **independently for each EEG channel**.  The result is a
+    ``(n_channels, n_bands)`` matrix of centre frequencies that feeds
+    :func:`~fbcsp_snn.preprocessing.apply_channel_specific_filterbank` to
+    construct a channel-personalised FBCSP decomposition.
+
+    The number of resulting filter-bank slots is identical to the standard
+    FBCSP (``n_bands``), so the downstream CSP fitting code is unchanged.
+    The difference is that in band slot *b*, channel *c* is filtered at its
+    own *b*-th best frequency rather than a global shared band.
+
+    Parameters
+    ----------
+    X : np.ndarray
+        Training EEG, shape ``(n_trials, n_channels, n_samples)``.
+    y : np.ndarray
+        Class labels (1-indexed), shape ``(n_trials,)``.
+    sfreq : float
+        Sampling frequency in Hz.
+    n_bands : int
+        Number of band slots (peaks) to identify per channel.
+    bandwidth : float
+        Filter bandwidth in Hz; also used as the minimum peak separation
+        distance to prevent two slots being assigned the same peak.
+    band_range : Tuple[float, float]
+        ``(f_min, f_max)`` frequency search range in Hz.
+    nperseg : int
+        Welch segment length (clipped to ``n_samples`` if larger).
+    smooth_hz : float
+        Smoothing window width in Hz applied to each channel's Fisher curve
+        before peak detection.
+
+    Returns
+    -------
+    channel_freqs : np.ndarray
+        Centre frequencies, shape ``(n_channels, n_bands)``.
+        Column 0 = strongest peak per channel, column 1 = second strongest, etc.
+    fisher_per_ch : np.ndarray
+        Raw (unsmoothed) per-channel Fisher ratio,
+        shape ``(n_channels, n_freqs)``.
+    freqs : np.ndarray
+        Full frequency axis, shape ``(n_freqs,)``.
+    """
+    n_trials, n_channels, n_samples = X.shape
+    nperseg = min(nperseg, n_samples)
+
+    # --- Vectorised Welch PSD ---
+    X_2d = X.reshape(n_trials * n_channels, n_samples)
+    freqs, psd_2d = welch(X_2d, fs=sfreq, nperseg=nperseg, axis=-1)
+    psd_3d = psd_2d.reshape(n_trials, n_channels, -1)  # (n_trials, n_ch, n_freqs)
+
+    # --- Per-channel Fisher discriminant ratio ---
+    fisher_per_ch = _fisher_ratio_per_channel(psd_3d, y)   # (n_ch, n_freqs)
+
+    # --- Restrict to band_range ---
+    lo_hz, hi_hz = band_range
+    freq_mask = (freqs >= lo_hz) & (freqs <= hi_hz)
+    freqs_r = freqs[freq_mask]                              # (n_freqs_r,)
+    fisher_r = fisher_per_ch[:, freq_mask]                  # (n_ch, n_freqs_r)
+
+    if len(freqs_r) < 2:
+        logger.warning(
+            "select_channel_specific_bands: fewer than 2 frequency bins in "
+            "range %s — returning uniform fallback bands.", band_range,
+        )
+        centre = (lo_hz + hi_hz) / 2.0
+        channel_freqs = np.full((n_channels, n_bands), centre, dtype=np.float32)
+        return channel_freqs, fisher_per_ch, freqs
+
+    freq_res = float(freqs_r[1] - freqs_r[0])
+    smooth_bins = max(1, int(round(smooth_hz / freq_res)))
+    min_dist_bins = max(1, int(round(bandwidth / freq_res)))
+
+    fisher_smooth = uniform_filter1d(fisher_r, size=smooth_bins, axis=1)
+
+    channel_freqs = np.zeros((n_channels, n_bands), dtype=np.float32)
+
+    for c in range(n_channels):
+        curve = fisher_smooth[c]
+        peak_idx, _ = find_peaks(curve, distance=min_dist_bins)
+
+        # Sort found peaks by Fisher value (highest first)
+        if len(peak_idx) > 0:
+            peak_idx = peak_idx[np.argsort(curve[peak_idx])[::-1]]
+            selected: List[int] = peak_idx.tolist()
+        else:
+            selected = []
+
+        # Fill remaining slots greedily with highest-valued non-overlapping bins
+        if len(selected) < n_bands:
+            for idx in np.argsort(curve)[::-1]:
+                if len(selected) >= n_bands:
+                    break
+                too_close = any(abs(int(idx) - s) < min_dist_bins for s in selected)
+                if not too_close:
+                    selected.append(int(idx))
+
+        for slot, idx in enumerate(selected[:n_bands]):
+            channel_freqs[c, slot] = float(freqs_r[idx])
+
+    # Log a compact summary: mean centre per slot
+    slot_means = channel_freqs.mean(axis=0)
+    slot_ranges = [
+        f"{channel_freqs[:, b].min():.1f}–{channel_freqs[:, b].max():.1f}"
+        for b in range(n_bands)
+    ]
+    logger.info(
+        "Channel-specific band selection: %d ch × %d slots  "
+        "range=[%.1f, %.1f] Hz  bw=%.1f Hz",
+        n_channels, n_bands, lo_hz, hi_hz, bandwidth,
+    )
+    logger.info(
+        "  Per-slot centre ranges (Hz): %s",
+        "  ".join(f"slot{b}={slot_ranges[b]}(μ={slot_means[b]:.1f})"
+                  for b in range(n_bands)),
+    )
+    return channel_freqs, fisher_per_ch, freqs
+
+
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
