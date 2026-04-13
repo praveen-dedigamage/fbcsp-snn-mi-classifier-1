@@ -13,8 +13,8 @@
 # ============================================================
 # FBCSP-SNN — Static 6 Hz non-overlapping filter bank
 #
-# Bands: 6 Hz wide, 6 Hz step (non-overlapping), 4–28 Hz
-#   (4,10)  (10,16)  (16,22)  (22,28)
+# Bands: 6 Hz wide, 4 Hz step, 2 Hz overlap, 4–30 Hz
+#   (4,10)  (8,14)  (12,18)  (16,22)  (20,26)  (24,30)
 #
 # Band list is hardcoded in the python command (not via SLURM
 # --export) so commas/parentheses are never passed through the
@@ -42,9 +42,9 @@ FOLD_IDX=$(( (TASK_ID - 1) % N_FOLDS ))
 PROJECT_DIR=/scratch/project_2003397/praveen/fbcsp-snn-mi-classifier-1
 
 echo "=============================================="
-echo "  FBCSP-SNN  static 6 Hz non-overlapping bands"
+echo "  FBCSP-SNN  static 6 Hz bands (2 Hz overlap)"
 echo "  Task:    ${TASK_ID}  →  Subject ${SUBJECT_ID}, Fold ${FOLD_IDX}"
-echo "  Bands:   (4,10) (10,16) (16,22) (22,28)"
+echo "  Bands:   (4,10) (8,14) (12,18) (16,22) (20,26) (24,30)"
 echo "  Results: ${RESULTS_DIR}"
 echo "  Extra:   ${EXTRA_ARGS:-<none>}"
 echo "  Node:    $(hostname)"
@@ -71,7 +71,7 @@ python main.py train \
     --fold "${FOLD_IDX}" \
     --n-folds "${N_FOLDS}" \
     --no-adaptive-bands \
-    --freq-bands "[(4,10),(10,16),(16,22),(22,28)]" \
+    --freq-bands "[(4,10),(8,14),(12,18),(16,22),(20,26),(24,30)]" \
     --csp-components-per-band 8 \
     --hidden-neurons 64 \
     --population-per-class 20 \
