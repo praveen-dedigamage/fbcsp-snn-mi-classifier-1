@@ -35,14 +35,19 @@ RESULTS_DIR="${1:-Results}"
 shift 2>/dev/null || true   # remove RESULTS_DIR; OK if no args were given
 EXTRA_ARGS="${*}"           # remaining args forwarded to every training task
 
-echo "RESULTS_DIR: ${RESULTS_DIR}"
-echo "EXTRA_ARGS:  ${EXTRA_ARGS:-<none>}"
+# ARRAY_SCRIPT can be overridden via environment variable, e.g.:
+#   ARRAY_SCRIPT=run_puhti_static6.sh bash submit_puhti.sh Results_static6_freqshift --freq-shift-augment --augment-windows
+ARRAY_SCRIPT="${ARRAY_SCRIPT:-run_puhti_array.sh}"
+
+echo "RESULTS_DIR:  ${RESULTS_DIR}"
+echo "ARRAY_SCRIPT: ${ARRAY_SCRIPT}"
+echo "EXTRA_ARGS:   ${EXTRA_ARGS:-<none>}"
 echo ""
 
-# Read N_FOLDS from the array script — single source of truth
-N_FOLDS=$(grep '^N_FOLDS=' run_puhti_array.sh | cut -d= -f2)
+# Read N_FOLDS from the chosen array script — single source of truth
+N_FOLDS=$(grep '^N_FOLDS=' "${ARRAY_SCRIPT}" | cut -d= -f2)
 if [ -z "${N_FOLDS}" ]; then
-    echo "ERROR: could not read N_FOLDS from run_puhti_array.sh" >&2
+    echo "ERROR: could not read N_FOLDS from ${ARRAY_SCRIPT}" >&2
     exit 1
 fi
 echo "N_FOLDS=${N_FOLDS} (read from run_puhti_array.sh)"
@@ -68,7 +73,7 @@ echo ""
 # RESULTS_DIR and EXTRA_ARGS are exported into every array task environment.
 TRAIN_OUTPUT=$(sbatch \
     --export="ALL,RESULTS_DIR=${RESULTS_DIR},EXTRA_ARGS=${EXTRA_ARGS}" \
-    run_puhti_array.sh)
+    "${ARRAY_SCRIPT}")
 TRAIN_JOBID=$(echo "${TRAIN_OUTPUT}" | awk '{print $4}')
 echo "${TRAIN_OUTPUT}"
 echo ""
@@ -112,9 +117,10 @@ echo ""
 
 echo "=============================================="
 echo "  All jobs submitted"
-echo "  Results dir: ${RESULTS_DIR}"
-echo "  Extra args:  ${EXTRA_ARGS:-<none>}"
-echo "  Train job:   ${TRAIN_JOBID} ($(( 9 * N_FOLDS )) tasks)"
+echo "  Results dir:  ${RESULTS_DIR}"
+echo "  Array script: ${ARRAY_SCRIPT}"
+echo "  Extra args:   ${EXTRA_ARGS:-<none>}"
+echo "  Train job:    ${TRAIN_JOBID} ($(( 9 * N_FOLDS )) tasks)"
 echo "  Aggregate:   ${AGG_JOBIDS[*]} (9 jobs)"
 echo "  Analyze:     ${ANALYZE_JOBID} (after all aggregates)"
 echo ""
