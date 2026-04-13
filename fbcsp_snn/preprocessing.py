@@ -38,7 +38,7 @@ from typing import Dict, List, Tuple
 
 import numpy as np
 from scipy.linalg import eigh
-from scipy.signal import butter, sosfilt
+from scipy.signal import butter, bessel, sosfilt
 from sklearn.covariance import ledoit_wolf as _lw_estimate
 
 from fbcsp_snn import setup_logger
@@ -59,14 +59,12 @@ def bandpass_filter(
     hi: float,
     sfreq: float,
     order: int = 4,
+    filter_type: str = "butterworth",
 ) -> np.ndarray:
-    """Apply a causal Butterworth bandpass filter to EEG data.
+    """Apply a causal bandpass filter to EEG data.
 
-    Uses a single forward pass (``sosfilt``) rather than zero-phase
-    (``sosfiltfilt``) so that the filter is implementable as a real-time
-    analog Gm-C circuit — a prerequisite for neuromorphic hardware deployment.
-    Each second-order section maps to one Gm-C biquad stage (two leaky
-    integrators + a summer).
+    Uses a single forward pass (``sosfilt``) so the filter maps to a
+    real-time analog Gm-C circuit for neuromorphic deployment.
 
     Parameters
     ----------
@@ -79,7 +77,10 @@ def bandpass_filter(
     sfreq : float
         Sampling frequency in Hz.
     order : int
-        Butterworth filter order.
+        Filter order.
+    filter_type : str
+        ``'butterworth'`` — maximally flat magnitude, moderate group delay.
+        ``'bessel'``      — maximally flat group delay, minimal phase distortion.
 
     Returns
     -------
@@ -87,15 +88,16 @@ def bandpass_filter(
         Filtered data, same shape as *X*, dtype ``float32``.
     """
     nyq = sfreq / 2.0
-    lo_n, hi_n = lo / nyq, hi / nyq
-    # Clamp to valid range to avoid Butterworth instability near 0 or Nyquist
-    lo_n = np.clip(lo_n, 1e-4, 1.0 - 1e-4)
-    hi_n = np.clip(hi_n, 1e-4, 1.0 - 1e-4)
+    lo_n = np.clip(lo / nyq, 1e-4, 1.0 - 1e-4)
+    hi_n = np.clip(hi / nyq, 1e-4, 1.0 - 1e-4)
 
-    sos = butter(order, [lo_n, hi_n], btype="bandpass", output="sos")
+    if filter_type == "bessel":
+        # norm='delay' → maximally flat group delay (minimal timing distortion)
+        sos = bessel(order, [lo_n, hi_n], btype="bandpass", norm="delay", output="sos")
+    else:
+        sos = butter(order, [lo_n, hi_n], btype="bandpass", output="sos")
 
     n_trials, n_channels, n_samples = X.shape
-    # Reshape to (n_trials * n_channels, n_samples) for a single vectorised call
     X_2d = X.reshape(n_trials * n_channels, n_samples)
     X_filt_2d = sosfilt(sos, X_2d, axis=-1)
     return X_filt_2d.reshape(n_trials, n_channels, n_samples).astype(np.float32)
@@ -155,6 +157,7 @@ def apply_filter_bank(
     bands: List[Tuple[float, float]],
     sfreq: float,
     order: int = 4,
+    filter_type: str = "butterworth",
 ) -> List[np.ndarray]:
     """Apply a bank of bandpass filters to EEG data.
 
@@ -167,21 +170,21 @@ def apply_filter_bank(
     sfreq : float
         Sampling frequency in Hz.
     order : int
-        Butterworth filter order.
+        Filter order.
+    filter_type : str
+        ``'butterworth'`` or ``'bessel'``.
 
     Returns
     -------
     List[np.ndarray]
         One filtered array per band, each shape
-        ``(n_trials, n_channels, n_samples)``.  The concatenation along the
-        channel axis yields shape ``(n_trials, n_channels × n_bands, n_samples)``
-        as documented in the pipeline architecture.
+        ``(n_trials, n_channels, n_samples)``.
     """
-    n_trials, n_channels, n_samples = X.shape
     filtered: List[np.ndarray] = []
 
     for lo, hi in bands:
-        X_band = bandpass_filter(X, lo, hi, sfreq, order=order)
+        X_band = bandpass_filter(X, lo, hi, sfreq, order=order,
+                                 filter_type=filter_type)
         filtered.append(X_band)
         logger.debug("Filtered band (%.1f–%.1f Hz): %s", lo, hi, X_band.shape)
 
