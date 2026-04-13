@@ -88,7 +88,12 @@ def plot_band_selection(
     ax.set_xlabel("Frequency (Hz)", fontsize=11)
     ax.set_ylabel("Fisher ratio (log scale)", fontsize=11)
     ax.set_title(title, fontsize=12)
-    ax.set_xlim(fisher_freqs[0], fisher_freqs[-1])
+    # When static bands are used, fisher_freqs is a dummy [0.0] — derive
+    # xlim from the band boundaries instead to avoid a singular transform.
+    if len(fisher_freqs) > 1 and fisher_freqs[-1] > fisher_freqs[0]:
+        ax.set_xlim(fisher_freqs[0], fisher_freqs[-1])
+    elif selected_bands:
+        ax.set_xlim(selected_bands[0][0] - 2, selected_bands[-1][1] + 2)
     ax.grid(axis="y", which="both", ls=":", alpha=0.4)
 
     plt.tight_layout()
