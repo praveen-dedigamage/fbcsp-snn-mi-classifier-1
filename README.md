@@ -404,6 +404,87 @@ Static 3-band FBCSP, 22 CSP components, std-based feature selection:
 
 ---
 
+## Neuromorphic hardware mapping
+
+A central design goal is that every inference operation maps to an analog or
+neuromorphic primitive — no digital CPU required at inference time.
+
+### Full pipeline mapping
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  Analog domain  (CMOS Gm-C / resistive crossbar)                    │
+│                                                                     │
+│  Raw EEG ──► 6-band Butterworth filter bank                         │
+│              (6 parallel Gm-C biquad chains, tuned to 4–30 Hz)      │
+│                                                                     │
+│           ──► CSP spatial projection  (W^T × X)                     │
+│              (resistive crossbar multiply-accumulate)               │
+│                                                                     │
+│           ──► Z-normalisation                                        │
+│              (affine Gm scaling: x → x/σ − μ/σ)                    │
+└─────────────────────────────────────────────────────────────────────┘
+                          │
+                          ▼  binary spikes
+┌─────────────────────────────────────────────────────────────────────┐
+│  Neuromorphic fabric  (Loihi / TrueNorth / SpiNNaker)               │
+│                                                                     │
+│  Delta spike encoder  (adaptive threshold comparator)               │
+│           ──► MIBIF feature routing  (fixed wiring, no compute)     │
+│           ──► LIF hidden layer  (64 neurons, β = 0.95)              │
+│           ──► LIF output layer  (4 × 20 population neurons)         │
+│           ──► Winner-take-all  (spike accumulator + argmax)         │
+│                                                                     │
+│  Weights stored as INT8  (validated ≤ 0.5 pp accuracy drop)         │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+### Analog Butterworth filter bank
+
+Each Butterworth band is implemented as a cascade of **Gm-C biquad sections**
+(transconductance-capacitor circuits):
+
+```
+dV₁/dt = Gm₁(Vᵢₙ − V₂) / C₁      ← leaky integrator 1
+dV₂/dt = Gm₂ · V₁ / C₂            ← leaky integrator 2
+```
+
+Tuning a band to centre frequency `f₀` requires only `Gm = 2π f₀ C` — a single
+transconductance adjustment. Six bands in parallel share the same fabrication;
+only `Gm` values differ. This is directly analogous to the **silicon cochlea**
+(Mead 1989), which implements an auditory filter bank in subthreshold CMOS using
+the same principle.
+
+Key properties:
+- **Causal** (real-time): no trial buffering required at inference
+- **Ultra-low power**: subthreshold Gm-C circuits operate at nanowatt levels
+- **CMOS-compatible**: same process node as the neuromorphic spiking core
+- **Reconfigurable**: changing `Gm` (bias current) shifts the centre frequency
+
+### Primitive-by-primitive breakdown
+
+| Pipeline stage | Neuromorphic primitive | Notes |
+|---|---|---|
+| Butterworth filter bank | Gm-C leaky integrator cascade | 2 integrators per biquad; silicon cochlea paradigm |
+| CSP spatial filter W^T × X | Resistive crossbar / current-mode MAC | Fixed weights after training |
+| Z-normalisation | Affine Gm scaling | Multiply-accumulate, no nonlinearity |
+| Delta spike encoder | Adaptive threshold comparator | Native neuromorphic primitive |
+| MIBIF feature selection | Fixed routing / wiring | Zero compute at inference |
+| LIF hidden layer | Leaky integrate-and-fire neurons | Core neuromorphic unit |
+| LIF output layer | LIF population coding | 20 neurons per class |
+| Winner-take-all decoding | Spike counter + comparator | Integer accumulate + argmax |
+| Synaptic weights | INT8 fixed-point | ≤ 0.5 pp accuracy drop validated |
+
+### Deployment note
+
+The preprocessing chain (filter bank → CSP → z-norm → encoder) maps to the
+**analog front-end** of a mixed-signal neuromorphic chip, consistent with the
+architecture of Intel Loihi 2's embedded sensor interface and neuromorphic
+cochlea designs. The SNN core (LIF layers + WTA) maps directly to the
+**digital spiking fabric**. No general-purpose CPU is required at inference.
+
+---
+
 ## Design constraints
 
 - **No data leakage.** Band selection, CSP fitting, z-norm statistics, and MIBIF
