@@ -404,6 +404,83 @@ Static 3-band FBCSP, 22 CSP components, std-based feature selection:
 
 ---
 
+## Neuromorphic hardware mapping
+
+Every inference operation maps to an analog or neuromorphic primitive —
+no digital CPU required at inference time.
+
+### Full pipeline mapping
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  Analog domain  (CMOS Gm-C / resistive crossbar)                    │
+│                                                                     │
+│  Raw EEG ──► 6-band causal Butterworth filter bank                  │
+│              (6 parallel Gm-C biquad chains, tuned to 4–30 Hz)      │
+│              Each order-4 band = 4 cascaded Gm-C biquad stages      │
+│                                                                     │
+│           ──► CSP spatial projection  (W^T × X)                     │
+│              (resistive crossbar multiply-accumulate)               │
+│                                                                     │
+│           ──► Z-normalisation                                        │
+│              (affine Gm scaling: x → x/σ − μ/σ)                    │
+└─────────────────────────────────────────────────────────────────────┘
+                          │
+                          ▼  binary spikes
+┌─────────────────────────────────────────────────────────────────────┐
+│  Neuromorphic fabric  (Loihi / TrueNorth / SpiNNaker)               │
+│                                                                     │
+│  Delta spike encoder  (adaptive threshold comparator)               │
+│           ──► MIBIF feature routing  (fixed wiring, no compute)     │
+│           ──► LIF hidden layer  (64 neurons, β = 0.95)              │
+│           ──► LIF output layer  (4 × 20 population neurons)         │
+│           ──► Winner-take-all  (spike accumulator + argmax)         │
+│                                                                     │
+│  Weights stored as INT8  (validated ≤ 0.5 pp accuracy drop)         │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+### Analog Butterworth filter bank (Gm-C implementation)
+
+The filter bank uses **causal single-pass IIR filtering** (`sosfilt`), making
+each band directly implementable as a cascade of Gm-C biquad sections:
+
+```
+dV₁/dt = Gm₁(Vᵢₙ − V₂) / C₁      ← leaky integrator 1
+dV₂/dt = Gm₂ · V₁ / C₂            ← leaky integrator 2
+```
+
+Tuning a band to centre frequency `f₀` requires only `Gm = 2π f₀ C`.
+Six bands in parallel share the same fabrication process; only bias currents
+differ. This is directly analogous to the **silicon cochlea** (Mead 1989),
+which implements a biological auditory filter bank in subthreshold CMOS.
+
+Key properties:
+- **Causal and real-time**: no trial buffering — processes sample-by-sample
+- **Ultra-low power**: subthreshold Gm-C circuits operate at nanowatt levels
+- **CMOS-compatible**: same process as the neuromorphic spiking core
+- **Reconfigurable**: shifting a band's centre frequency requires only a bias current change
+
+### Primitive-by-primitive breakdown
+
+| Pipeline stage | Neuromorphic primitive | Hardware-mappable? |
+|---|---|---|
+| Causal Butterworth filter bank | Gm-C leaky integrator cascade | ✅ Yes |
+| CSP spatial filter W^T × X | Resistive crossbar MAC | ✅ Yes |
+| Z-normalisation | Affine Gm scaling | ✅ Yes |
+| Delta spike encoder | Adaptive threshold comparator | ✅ Yes |
+| MIBIF feature selection | Fixed routing / wiring | ✅ Yes |
+| LIF hidden layer | Leaky integrate-and-fire neurons | ✅ Yes |
+| LIF output layer | LIF population coding | ✅ Yes |
+| Winner-take-all decoding | Spike counter + comparator | ✅ Yes |
+| INT8 synaptic weights | Fixed-point arithmetic | ✅ Yes |
+
+The entire inference pipeline — from raw EEG sample to classification decision —
+maps to hardware primitives with no floating-point operations and no general-purpose
+CPU required.
+
+---
+
 ## Design constraints
 
 - **No data leakage.** Band selection, CSP fitting, z-norm statistics, and MIBIF

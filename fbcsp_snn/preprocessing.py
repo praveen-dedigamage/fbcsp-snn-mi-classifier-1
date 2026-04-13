@@ -2,9 +2,11 @@
 
 Filter bank
 -----------
-Applies a zero-phase Butterworth bandpass filter for each frequency band and
-returns a list of per-band arrays so that downstream code can access each
-band independently (needed for per-band CSP fitting).
+Applies a causal (single forward-pass) Butterworth bandpass filter for each
+frequency band and returns a list of per-band arrays so that downstream code
+can access each band independently (needed for per-band CSP fitting).
+Causal filtering is used so that the filter bank maps directly to an analog
+Gm-C circuit implementation on neuromorphic hardware.
 
 Pairwise CSP
 ------------
@@ -36,7 +38,7 @@ from typing import Dict, List, Tuple
 
 import numpy as np
 from scipy.linalg import eigh
-from scipy.signal import butter, sosfiltfilt
+from scipy.signal import butter, sosfilt
 from sklearn.covariance import ledoit_wolf as _lw_estimate
 
 from fbcsp_snn import setup_logger
@@ -58,7 +60,13 @@ def bandpass_filter(
     sfreq: float,
     order: int = 4,
 ) -> np.ndarray:
-    """Apply a zero-phase Butterworth bandpass filter to EEG data.
+    """Apply a causal Butterworth bandpass filter to EEG data.
+
+    Uses a single forward pass (``sosfilt``) rather than zero-phase
+    (``sosfiltfilt``) so that the filter is implementable as a real-time
+    analog Gm-C circuit — a prerequisite for neuromorphic hardware deployment.
+    Each second-order section maps to one Gm-C biquad stage (two leaky
+    integrators + a summer).
 
     Parameters
     ----------
@@ -89,7 +97,7 @@ def bandpass_filter(
     n_trials, n_channels, n_samples = X.shape
     # Reshape to (n_trials * n_channels, n_samples) for a single vectorised call
     X_2d = X.reshape(n_trials * n_channels, n_samples)
-    X_filt_2d = sosfiltfilt(sos, X_2d, axis=-1)
+    X_filt_2d = sosfilt(sos, X_2d, axis=-1)
     return X_filt_2d.reshape(n_trials, n_channels, n_samples).astype(np.float32)
 
 
