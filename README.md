@@ -56,9 +56,10 @@ Raw EEG  (n_trials, n_channels, n_samples)
        Sum spikes per class population → argmax
 ```
 
-**Current configuration (V4.1) — 4-class, 12 bands, m=4 per end:**
-- 6 pairs × 8 filters/band × 12 bands = **576 CSP features** pre-MIBIF
-- MIBIF at 50% → **216 features** fed to the SNN
+**Current best configuration (static6-overlap) — 4-class, 6 static bands, m=4 per end:**
+- 6 overlapping bands: `(4,10)(8,14)(12,18)(16,22)(20,26)(24,30)` — 6 Hz wide, 4 Hz step, 2 Hz overlap, 4–30 Hz
+- 6 pairs × 8 filters/band × 6 bands = **288 CSP features** pre-MIBIF
+- MIBIF at 50% → **~144 features** fed to the SNN
 - SNN output: 4 classes × 20 neurons = **80 output neurons**
 
 ---
@@ -359,48 +360,78 @@ Static 3-band FBCSP, 22 CSP components, std-based feature selection:
 | S9 | 72.4% | 70.9% |
 | **Mean** | **64.8%** | **64.5%** |
 
-### V4.1 — adaptive pipeline (current best)
+### Experimental progression (BNCI2014_001, 9 subjects, 5-fold CV)
 
-12 adaptive bands, 8 CSP filters/band (`min_fisher_fraction=0.15`), 5-fold CV:
+All results: session 1 train / session 2 test, FP32.
 
-| Subject | SNN FP32 | SNN INT8 | Val FP32 | LDA  | SVM  |
-|---|---|---|---|---|---|
-| S1 | 81.4% | — | 88.2% | 52.5% | 76.6% |
-| S2 | 46.5% | — | 63.9% | 42.0% | 44.9% |
-| S3 | 74.7% | — | 89.9% | 38.3% | **79.1%** |
-| S4 | 63.1% | — | 69.1% | 49.9% | 59.9% |
-| S5 | 47.2% | — | 68.4% | 38.9% | 40.1% |
-| S6 | 54.2% | — | 60.8% | 38.9% | 49.0% |
-| S7 | 75.3% | — | 87.5% | 70.1% | 67.7% |
-| S8 | 79.9% | — | 91.0% | 55.6% | 76.5% |
-| S9 | 80.1% | — | 81.9% | 50.3% | 76.9% |
-| **Mean** | **66.9%** | **66.9%** | — | **48.5%** | **63.4%** |
+| Version | Mean Acc | Std | vs Baseline | Key change |
+|---|---|---|---|---|
+| Baseline | 64.8% | — | — | Static 3-band, 22 CSP, std-based selection |
+| V4 | 66.9% | ±14.5 | +2.1pp | 9 bands, 6 CSP/band |
+| V4.1 | 66.9% | ±13.8 | +2.1pp | 12 bands, 8 CSP/band, mff=0.15 |
+| V4.2-augwin | 67.1% | ±15.0 | +2.3pp | V4.1 + sliding-window CSP augmentation |
+| **static6-overlap** | **67.2%** | **±14.6** | **+2.4pp** | **6 Hz static bands, 4 Hz step, 2 Hz overlap, 4–30 Hz ⭐ NEW BEST** |
+| causal-butterworth | 66.2% | ±14.7 | +1.4pp | static6-overlap + causal `sosfilt` (neuromorphic-compatible) |
 
-**Target:** 70%+ mean FP32. Gap remaining: **3.1pp**.
+### static6-overlap — per-subject results (⭐ current best)
 
-### Classifier comparison analysis
+6 static overlapping bands, 8 CSP filters/band, sliding-window augmentation, zero-phase filter:
+
+| Subject | FP32 Acc | vs Baseline |
+|---|---|---|
+| S1 | 83.6% | −1.7pp |
+| S2 | 43.5% | −1.9pp |
+| S3 | 77.2% | +3.4pp |
+| S4 | 63.0% | +8.7pp |
+| S5 | 45.7% | +1.3pp |
+| S6 | 54.0% | +2.3pp |
+| S7 | 75.7% | −0.9pp |
+| S8 | 81.4% | +1.8pp |
+| S9 | 79.8% | +7.4pp |
+| **Mean** | **67.2%** | **+2.4pp** |
+
+**Target:** 70%+ mean FP32. Gap remaining: **2.8pp**.
+
+### Causal filter — neuromorphic accuracy cost
+
+Replacing zero-phase `sosfiltfilt` with causal `sosfilt` for neuromorphic compatibility:
+
+| Subject | Zero-phase | Causal | Cost |
+|---|---|---|---|
+| S1 | 83.6% | 83.6% | 0.0pp |
+| S2 | 43.5% | 45.4% | +1.9pp |
+| S3 | 77.2% | 77.2% | 0.0pp |
+| S4 | 63.0% | 63.7% | +0.7pp |
+| S5 | 45.7% | 46.2% | +0.5pp |
+| S6 | 54.0% | 51.8% | −2.2pp |
+| S7 | 75.7% | 70.9% | −4.8pp |
+| S8 | 81.4% | 81.4% | 0.0pp |
+| S9 | 79.8% | 79.8% | 0.0pp |
+| **Mean** | **67.2%** | **66.2%** | **−1.0pp** |
+
+S7 is most affected: needs broad beta coverage (peak at ~23 Hz); causal Butterworth group delay
+at beta frequencies shifts the spectral content. A Bessel filter (maximally flat group delay)
+is expected to recover part of this gap — **pending experiment**.
+
+### V4.2-augwin — classifier comparison
 
 | Classifier | Mean | vs static baseline |
 |---|---|---|
-| **SNN (FP32)** | **66.9%** | **+2.1pp** |
-| SVM (RBF) | 63.4% | -1.4pp |
-| LDA | 48.5% | -16.3pp |
+| **SNN (FP32)** | **67.1%** | **+2.3pp** |
+| SVM (RBF) | 63.4% | −1.4pp |
+| LDA | 48.5% | −16.3pp |
 
 **Key findings:**
 
-- **SNN beats SVM on 8/9 subjects** — the temporal spike encoding extracts real
-  information beyond log-variance, confirming the SNN is not the bottleneck.
-- **LDA collapses** at 48.5% because 216 features >> ~230 training trials (p >> n
-  regime). RBF-SVM handles this better but still underperforms the SNN.
-- **S3 anomaly:** SVM (79.1%) beats SNN (74.7%). MIBIF at 50% may be discarding
-  discriminative variance features for S3. A higher feature percentile (65–70%)
-  may close this gap.
-- **Weak subjects (S2, S5, S6):** both SVM and SNN fail similarly (~44–54%).
-  The bottleneck is cross-session EEG non-stationarity in the FBCSP features —
-  no classifier improvement will fix this. Needs better feature extraction
-  (e.g. Euclidean Alignment, domain-adaptive band selection).
+- **SNN beats SVM on 8/9 subjects** — temporal spike encoding extracts real information
+  beyond log-variance, confirming the SNN is not the bottleneck.
+- **LDA collapses** at 48.5% because ~216 features >> ~230 training trials (p >> n regime).
+  RBF-SVM handles this better but still underperforms the SNN.
+- **Weak subjects (S2, S5, S6):** both SVM and SNN fail similarly (~44–54%). The bottleneck
+  is cross-session EEG non-stationarity — needs better feature extraction (e.g. Euclidean
+  Alignment, domain-adaptive band selection).
 - **Val→test gap:** S5 val=68% vs test=47% (21pp), S2 val=64% vs test=47% (17pp).
-  Session 1 patterns don't transfer to session 2 for these subjects.
+  Session 1 patterns do not transfer to session 2 for these subjects.
 
 ---
 
@@ -777,3 +808,40 @@ evaluate_model(model_int8, ...) → test_acc_int8
 **6. Output**
 - Logs `FP32 X.X%  INT8 X.X%` to stdout.
 - Saves `infer_confusion_fp32.png` and `infer_confusion_int8.png` to `fold_K/`.
+
+---
+
+## Roadmap
+
+### In progress / pending BU replenishment
+
+| Priority | Task | Command | Expected outcome |
+|---|---|---|---|
+| 1 | **Bessel filter** (causal, maximally flat group delay) | `ARRAY_SCRIPT=run_puhti_static6.sh bash submit_puhti.sh Results_bessel_static6 --augment-windows --filter-type bessel` | Reduce S7 group-delay penalty vs causal Butterworth; target ≥ 67.2% with full causal claim |
+| 2 | **Multi-dataset compatibility test** (1 subject × fold 0) | `sbatch run_puhti_dataset_test.sh` (causal-filter branch) | Verify pipeline runs on PhysionetMI, Cho2017, BNCI2015_001 without errors |
+| 3 | **Full multi-dataset accuracy** (all subjects) | Submit per-dataset array jobs after compatibility confirmed | Cross-dataset generalisation benchmark |
+
+### Completed experiments (closed)
+
+| Result | Verdict |
+|---|---|
+| Adaptive 6–12 bands (V3–V4.1) | +2.1pp vs baseline; static bands match or beat adaptive |
+| Sliding-window CSP augmentation (V4.2-augwin) | +0.2pp; useful for covariance estimation |
+| 6 static overlapping bands 4–30 Hz (static6-overlap) | **+2.4pp — current best (67.2%)** |
+| Causal Butterworth filter (causal-filter branch) | −1.0pp vs zero-phase; neuromorphic-compatible |
+| Ledoit-Wolf CSP regularisation | No gain; Tikhonov wins |
+| Adaptive MIBIF (mi_fraction 0.05–0.20) | Max 66.5%; percentile=50% wins |
+| Channel selection top-K (Approach A, K=5/8/12) | Ceiling at 67.1%; no global K beats static6 |
+| Frequency-shift augmentation | −0.5pp vs V4.2-augwin; noise outweighs benefit |
+| Recurrent LIF (RLeaky W_rec 64×64) | −8.9pp; 4096 extra params do not converge at 1000 epochs |
+
+### Gap analysis — reaching 70%
+
+Current best: **67.2%** (2.8pp below target). Remaining opportunities:
+
+- **Bessel filter**: expected to recover ~0.5–1.0pp of the causal-Butterworth penalty for S7;
+  may also marginally improve zero-phase configuration
+- **Subject-specific band tuning**: S7 needs beta (20–26 Hz); S2/S5 are non-responders with
+  near-chance performance — gains must come from S4, S6, S9 (all ≥ 8pp below ceiling)
+- **Ensemble / majority vote across folds**: low-effort +0.5–1.0pp potential with no new training
+- **Transfer learning / domain adaptation**: address cross-session non-stationarity for S2/S5/S6
