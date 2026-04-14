@@ -199,9 +199,9 @@ def _run_single_fold(
     )
 
     # ---- Filter bank ----
-    X_bands_tr  = apply_filter_bank(X_f_tr,  bands, sfreq, order=4)
-    X_bands_val = apply_filter_bank(X_f_val, bands, sfreq, order=4)
-    X_bands_te  = apply_filter_bank(X_test,  bands, sfreq, order=4)
+    X_bands_tr  = apply_filter_bank(X_f_tr,  bands, sfreq, order=4, filter_type=cfg.filter_type)
+    X_bands_val = apply_filter_bank(X_f_val, bands, sfreq, order=4, filter_type=cfg.filter_type)
+    X_bands_te  = apply_filter_bank(X_test,  bands, sfreq, order=4, filter_type=cfg.filter_type)
 
     # ---- Sliding-window augmentation (CSP fitting only) ----
     # Windows the filtered training bands to increase covariance sample count.
@@ -379,6 +379,7 @@ def _run_single_fold(
         "n_input_features":   n_input,
         "bands":              [[float(lo), float(hi)] for lo, hi in bands],
         "adaptive_bands":     cfg.adaptive_bands,
+        "filter_type":        cfg.filter_type,
         "euclidean_alignment": cfg.euclidean_alignment,
         "riemannian_mean":    cfg.riemannian_mean,
         "csp_m":              m,
@@ -569,7 +570,8 @@ def run_infer(cfg: Config) -> None:
             mibif = pickle.load(f)
 
     # Preprocessing chain
-    X_bands = apply_filter_bank(X_test, bands, sfreq, order=4)
+    filter_type = params.get("filter_type", "butterworth")
+    X_bands = apply_filter_bank(X_test, bands, sfreq, order=4, filter_type=filter_type)
     proj = csp.transform(X_bands)
     X_concat = _concat_projections(proj)
     X_norm = znorm.transform(X_concat)
@@ -760,7 +762,8 @@ def run_aggregate(cfg: Config) -> None:
             with open(mibif_path, "rb") as f:
                 mibif = pickle.load(f)
 
-        X_bands = apply_filter_bank(X_test, bands, sfreq, order=4)
+        ft      = params.get("filter_type", "butterworth")
+        X_bands = apply_filter_bank(X_test, bands, sfreq, order=4, filter_type=ft)
         proj    = csp.transform(X_bands)
         X_concat = _concat_projections(proj)
         X_norm  = znorm.transform(X_concat)
