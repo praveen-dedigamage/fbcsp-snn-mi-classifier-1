@@ -25,9 +25,9 @@ Without these, the paper either can't be written or won't survive review.
   Loihi deployment.
   Effort: ~30 lines across `encoding.py` and `pipeline.py`. ~1 day.
 
-- [ ] **4. ADM A/B sweep across all 9 subjects, 5 folds.**
-  Frame as parity check (Δmean ≥ −1.0 pp is success, not failure).
-  Effort: 1 Puhti submit, no new code. ~12 hours wall time.
+- [x] **4. ADM A/B sweep across all 9 subjects, 5 folds.** ✓ CLOSED 2026-04-16
+  Result: 67.4% ±15.2 — +0.2pp vs delta encoder (67.2%). Parity check passed.
+  Completed as part of item #2 (Results_adm_static6 run).
 
 - [ ] **5. CSP weight quantization sweep.**
   Quantize CSP eigenvectors to 4-, 6-, 8-bit symmetric per-tensor. Run all 9 subjects at
