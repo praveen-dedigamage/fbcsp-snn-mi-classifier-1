@@ -19,11 +19,13 @@ Without these, the paper either can't be written or won't survive review.
   S2 +6.7pp, S9 +3.5pp, S1 +1.7pp drive the gain; S6 −4.2pp main loser.
   ADM adds direct silicon precedent (Lichtsteiner & Liu address-event camera).
 
-- [ ] **3. Persistent-state flag.**
-  Hoist filter `zi`, encoder `v_ref`, and LIF membrane potential `V` out of per-trial scope
-  so they persist across trial boundaries. Required for the streaming claim and for any future
-  Loihi deployment.
-  Effort: ~30 lines across `encoding.py` and `pipeline.py`. ~1 day.
+- [x] **3. Persistent-state flag.** ✓ RESOLVED 2026-04-16 — no code change needed.
+  True persistent state across trial boundaries is invalid for epoched MI data: the paradigm
+  includes non-MI cues and rest periods between imagery windows that the pipeline never sees.
+  Connecting end of MI trial N directly to start of trial N+1 creates fake continuity.
+  Resolution (option 2): each primitive is individually streaming-compatible (causal IIR zi,
+  ADM v_ref, LIF V). Scoped honestly in the methods section — benchmarked on epoched data
+  per BNCI2014_001 protocol, full-stream deployment left for hardware validation (item #8).
 
 - [x] **4. ADM A/B sweep across all 9 subjects, 5 folds.** ✓ CLOSED 2026-04-16
   Result: 67.4% ±15.2 — +0.2pp vs delta encoder (67.2%). Parity check passed.
