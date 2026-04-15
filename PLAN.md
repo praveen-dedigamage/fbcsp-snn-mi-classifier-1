@@ -14,11 +14,10 @@ Without these, the paper either can't be written or won't survive review.
   Flat group-delay hypothesis failed; S7 still regressed (69.3 vs 70.9). Only S2 (50.8%, best
   ever) and S4 (64.0%) benefit. Causal Butterworth remains the neuromorphic-compatible choice.
 
-- [ ] **2. Adaptive ADM encoder.**
-  Replace `|x[t] − x[t−1]|` with reference-tracking `|x − v_ref|` plus ON/OFF polarity.
-  Validate locally on one subject with reconstruction RMSE < 5%.
-  Effort: ~30 lines of code in `encoding.py`, plus pipeline plumbing for doubled feature
-  dimension. ~1 day.
+- [x] **2. Adaptive ADM encoder.** ✓ CLOSED 2026-04-16
+  Result: 67.4% ±15.2 — +0.2pp vs static6-overlap (67.2%), new best.
+  S2 +6.7pp, S9 +3.5pp, S1 +1.7pp drive the gain; S6 −4.2pp main loser.
+  ADM adds direct silicon precedent (Lichtsteiner & Liu address-event camera).
 
 - [ ] **3. Persistent-state flag.**
   Hoist filter `zi`, encoder `v_ref`, and LIF membrane potential `V` out of per-trial scope
