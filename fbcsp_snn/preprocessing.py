@@ -188,6 +188,7 @@ def apply_filter_bank(
         filtered.append(X_band)
         logger.debug("Filtered band (%.1f–%.1f Hz): %s", lo, hi, X_band.shape)
 
+    n_trials, n_channels, n_samples = X.shape
     logger.info(
         "Filter bank: %d bands → each %s  (concat would be %s)",
         len(bands),
