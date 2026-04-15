@@ -9,10 +9,10 @@ for a publishable paper.
 
 Without these, the paper either can't be written or won't survive review.
 
-- [ ] **1. Bessel-filter experiment.**
-  Already coded (commit 1631610), already on the queue. Submit to Puhti when BUs return.
-  Deliverable: one row in the master results table; addresses the S7 group-delay regression.
-  Effort: 1 day of work + ~12 hours of Puhti wall time.
+- [x] **1. Bessel-filter experiment.** ✓ CLOSED 2026-04-16
+  Result: 63.4% ±14.0 — −2.8 pp vs causal-Butterworth (66.2%), −3.8 pp vs zero-phase (67.2%).
+  Flat group-delay hypothesis failed; S7 still regressed (69.3 vs 70.9). Only S2 (50.8%, best
+  ever) and S4 (64.0%) benefit. Causal Butterworth remains the neuromorphic-compatible choice.
 
 - [ ] **2. Adaptive ADM encoder.**
   Replace `|x[t] − x[t−1]|` with reference-tracking `|x − v_ref|` plus ON/OFF polarity.

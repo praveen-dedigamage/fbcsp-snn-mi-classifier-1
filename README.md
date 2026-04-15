@@ -372,6 +372,7 @@ All results: session 1 train / session 2 test, FP32.
 | V4.2-augwin | 67.1% | ±15.0 | +2.3pp | V4.1 + sliding-window CSP augmentation |
 | **static6-overlap** | **67.2%** | **±14.6** | **+2.4pp** | **6 Hz static bands, 4 Hz step, 2 Hz overlap, 4–30 Hz ⭐ NEW BEST** |
 | causal-butterworth | 66.2% | ±14.7 | +1.4pp | static6-overlap + causal `sosfilt` (neuromorphic-compatible) |
+| causal-bessel | 63.4% | ±14.0 | +0.6pp | static6-overlap + causal Bessel — flat group delay did not help S7 |
 
 ### static6-overlap — per-subject results (⭐ current best)
 
@@ -410,8 +411,8 @@ Replacing zero-phase `sosfiltfilt` with causal `sosfilt` for neuromorphic compat
 | **Mean** | **67.2%** | **66.2%** | **−1.0pp** |
 
 S7 is most affected: needs broad beta coverage (peak at ~23 Hz); causal Butterworth group delay
-at beta frequencies shifts the spectral content. A Bessel filter (maximally flat group delay)
-is expected to recover part of this gap — **pending experiment**.
+at beta frequencies shifts the spectral content. A Bessel filter was tested but made S7 worse
+(69.3% vs 70.9%) — causal Butterworth remains the neuromorphic-compatible choice (−1.0pp vs zero-phase).
 
 ### V4.2-augwin — classifier comparison
 
@@ -894,13 +895,12 @@ evaluate_model(model_int8, ...) → test_acc_int8
 
 ## Roadmap
 
-### In progress / pending BU replenishment
+### In progress / pending
 
 | Priority | Task | Command | Expected outcome |
 |---|---|---|---|
-| 1 | **Bessel filter** (causal, maximally flat group delay) | `ARRAY_SCRIPT=run_puhti_static6.sh bash submit_puhti.sh Results_bessel_static6 --augment-windows --filter-type bessel` | Reduce S7 group-delay penalty vs causal Butterworth; target ≥ 67.2% with full causal claim |
-| 2 | **Multi-dataset compatibility test** (1 subject × fold 0) | `sbatch run_puhti_dataset_test.sh` (causal-filter branch) | Verify pipeline runs on PhysionetMI, Cho2017, BNCI2015_001 without errors |
-| 3 | **Full multi-dataset accuracy** (all subjects) | Submit per-dataset array jobs after compatibility confirmed | Cross-dataset generalisation benchmark |
+| 1 | **Multi-dataset compatibility test** (1 subject × fold 0) | `sbatch run_puhti_dataset_test.sh` (causal-filter branch) | Verify pipeline runs on PhysionetMI, Cho2017, BNCI2015_001 without errors |
+| 2 | **Full multi-dataset accuracy** (all subjects) | Submit per-dataset array jobs after compatibility confirmed | Cross-dataset generalisation benchmark |
 
 ### Completed experiments (closed)
 
@@ -910,6 +910,7 @@ evaluate_model(model_int8, ...) → test_acc_int8
 | Sliding-window CSP augmentation (V4.2-augwin) | +0.2pp; useful for covariance estimation |
 | 6 static overlapping bands 4–30 Hz (static6-overlap) | **+2.4pp — current best (67.2%)** |
 | Causal Butterworth filter (causal-filter branch) | −1.0pp vs zero-phase; neuromorphic-compatible |
+| Causal Bessel filter | −3.8pp vs zero-phase, −2.8pp vs causal Butterworth; S7 not recovered |
 | Ledoit-Wolf CSP regularisation | No gain; Tikhonov wins |
 | Adaptive MIBIF (mi_fraction 0.05–0.20) | Max 66.5%; percentile=50% wins |
 | Channel selection top-K (Approach A, K=5/8/12) | Ceiling at 67.1%; no global K beats static6 |
@@ -920,8 +921,7 @@ evaluate_model(model_int8, ...) → test_acc_int8
 
 Current best: **67.2%** (2.8pp below target). Remaining opportunities:
 
-- **Bessel filter**: expected to recover ~0.5–1.0pp of the causal-Butterworth penalty for S7;
-  may also marginally improve zero-phase configuration
+- **ADM encoder** (plan item #2): replace delta encoder with reference-tracking ON/OFF; parity check ≥ −1pp
 - **Subject-specific band tuning**: S7 needs beta (20–26 Hz); S2/S5 are non-responders with
   near-chance performance — gains must come from S4, S6, S9 (all ≥ 8pp below ceiling)
 - **Ensemble / majority vote across folds**: low-effort +0.5–1.0pp potential with no new training
