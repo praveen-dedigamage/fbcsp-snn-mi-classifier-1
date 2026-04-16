@@ -7,22 +7,26 @@
 #   bash submit_puhti.sh [RESULTS_DIR [EXTRA_TRAIN_ARGS...]]
 #
 # Examples:
-#   bash submit_puhti.sh                                    # default: Results/
-#   bash submit_puhti.sh Results_mif005 --mi-fraction 0.05
+#   bash submit_puhti.sh                                    # all 9 subjects
+#   bash submit_puhti.sh Results_ptq_test                  # all 9 subjects
+#   SUBJECTS="1 2" bash submit_puhti.sh Results_ptq_test   # subjects 1-2 only
+#   SUBJECTS="1" bash submit_puhti.sh Results_ptq_test     # subject 1 only
 #   bash submit_puhti.sh Results_mif010 --mi-fraction 0.10
-#   bash submit_puhti.sh Results_mif015 --mi-fraction 0.15
+#
+# Override subject list:
+#   SUBJECTS="1 2 3"   — space-separated subject IDs (default: 1..9)
 #
 # Each experiment writes to its own RESULTS_DIR so parallel runs
 # never overwrite each other.
 #
 # Dependency chain:
 #   - Each subject's aggregate job triggers as soon as its own
-#     N_FOLDS training tasks complete (not waiting for all 45)
-#   - The analyze job triggers once all 9 aggregate jobs finish
+#     N_FOLDS training tasks complete (not waiting for all tasks)
+#   - The analyze job triggers once all aggregate jobs finish
 #
-# Stage 1: Training     45 tasks  (9 subjects × N_FOLDS, all parallel)
-# Stage 2: Aggregate     9 jobs   (one per subject, afterok its folds)
-# Stage 3: Analyze       1 job    (afterok all 9 aggregate jobs)
+# Stage 1: Training     N tasks  (selected subjects × N_FOLDS, all parallel)
+# Stage 2: Aggregate    1 job per subject (afterok its own folds only)
+# Stage 3: Analyze      1 job    (afterok all aggregate jobs)
 # ============================================================
 
 set -euo pipefail
@@ -39,8 +43,12 @@ EXTRA_ARGS="${*}"           # remaining args forwarded to every training task
 #   ARRAY_SCRIPT=run_puhti_static6.sh bash submit_puhti.sh Results_static6 --augment-windows
 ARRAY_SCRIPT="${ARRAY_SCRIPT:-run_puhti_array.sh}"
 
+# Subject list — override with: SUBJECTS="1 2 3" bash submit_puhti.sh ...
+SUBJECTS="${SUBJECTS:-1 2 3 4 5 6 7 8 9}"
+
 echo "RESULTS_DIR:  ${RESULTS_DIR}"
 echo "ARRAY_SCRIPT: ${ARRAY_SCRIPT}"
+echo "SUBJECTS:     ${SUBJECTS}"
 echo "EXTRA_ARGS:   ${EXTRA_ARGS:-<none>}"
 echo ""
 
@@ -69,9 +77,20 @@ done
 [ "${REMOVED}" -eq 0 ] && echo "  Nothing to remove." || echo "  Removed ${REMOVED} director(ies)."
 echo ""
 
-# --- Stage 1: Training array (N_FOLDS × 9 tasks) ---------------------------
-# RESULTS_DIR and EXTRA_ARGS are exported into every array task environment.
+# --- Stage 1: Training array (N_FOLDS × selected subjects) -----------------
+# Compute the SLURM array task IDs for the chosen subjects.
+# Task ID encoding: subject S, fold F → task (S-1)*N_FOLDS + F + 1
+ARRAY_TASKS=""
+for S in ${SUBJECTS}; do
+    START=$(( (S - 1) * N_FOLDS + 1 ))
+    END=$(( S * N_FOLDS ))
+    ARRAY_TASKS="${ARRAY_TASKS:+${ARRAY_TASKS},}${START}-${END}"
+done
+echo "Array tasks: ${ARRAY_TASKS}"
+echo ""
+
 TRAIN_OUTPUT=$(sbatch \
+    --array="${ARRAY_TASKS}" \
     --export="ALL,RESULTS_DIR=${RESULTS_DIR},EXTRA_ARGS=${EXTRA_ARGS}" \
     "${ARRAY_SCRIPT}")
 TRAIN_JOBID=$(echo "${TRAIN_OUTPUT}" | awk '{print $4}')
@@ -79,10 +98,9 @@ echo "${TRAIN_OUTPUT}"
 echo ""
 
 # --- Stage 2: One aggregate job per subject ---------------------------------
-# Each subject S owns task IDs: (S-1)*N_FOLDS+1 .. S*N_FOLDS
-# We depend only on those specific array tasks, not the full array.
+# Each subject S owns specific task IDs — depend only on those.
 AGG_JOBIDS=()
-for S in $(seq 1 9); do
+for S in ${SUBJECTS}; do
     START=$(( (S - 1) * N_FOLDS + 1 ))
     END=$(( S * N_FOLDS ))
 
@@ -117,11 +135,13 @@ echo ""
 
 echo "=============================================="
 echo "  All jobs submitted"
+N_SUBJECTS=$(echo ${SUBJECTS} | wc -w)
 echo "  Results dir:  ${RESULTS_DIR}"
 echo "  Array script: ${ARRAY_SCRIPT}"
+echo "  Subjects:     ${SUBJECTS}"
 echo "  Extra args:   ${EXTRA_ARGS:-<none>}"
-echo "  Train job:    ${TRAIN_JOBID} ($(( 9 * N_FOLDS )) tasks)"
-echo "  Aggregate:   ${AGG_JOBIDS[*]} (9 jobs)"
+echo "  Train job:    ${TRAIN_JOBID} (${N_SUBJECTS} subjects × ${N_FOLDS} folds = $(( N_SUBJECTS * N_FOLDS )) tasks)"
+echo "  Aggregate:   ${AGG_JOBIDS[*]} (${N_SUBJECTS} jobs)"
 echo "  Analyze:     ${ANALYZE_JOBID} (after all aggregates)"
 echo ""
 echo "  Monitor: squeue -u \$USER"
