@@ -330,10 +330,9 @@ def _write_csvs(records: List[dict], output_dir: Path) -> None:
     logger.info("Raw results: %s", raw_path)
 
     # Per-subject files for array-job merging
-    from collections import defaultdict
-    by_subject: Dict[int, List[dict]] = defaultdict(list)
+    by_subject: Dict[int, List[dict]] = {}
     for r in records:
-        by_subject[r["subject"]].append(r)
+        by_subject.setdefault(r["subject"], []).append(r)
     for subj, subj_records in by_subject.items():
         subj_path = output_dir / f"mc_raw_S{subj}.csv"
         with open(subj_path, "w", newline="") as f:
@@ -516,22 +515,56 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--output-dir", default="Results_butterworth_mc")
     p.add_argument("--moabb-dataset", default="BNCI2014_001")
     p.add_argument("--seed", type=int, default=42)
+    p.add_argument("--from-csv", default=None, metavar="CSV_PATH",
+                   help="Skip MC loop entirely; load this merged mc_raw.csv and "
+                        "regenerate summary + plot only.")
     return p.parse_args()
+
+
+def _load_records_from_csv(csv_path: Path) -> List[dict]:
+    """Load mc_raw.csv written by a previous run."""
+    records = []
+    with open(csv_path, newline="") as f:
+        for row in csv.DictReader(f):
+            records.append({
+                "subject":      int(row["subject"]),
+                "fold":         int(row["fold"]),
+                "sigma":        float(row["sigma"]),
+                "draw":         int(row["draw"]),
+                "accuracy":     float(row["accuracy"]),
+                "baseline_acc": float(row["baseline_acc"]),
+                "acc_drop":     float(row["acc_drop"]),
+            })
+    return records
 
 
 def main() -> None:
     args = _parse_args()
-    results_dir = Path(args.results_dir)
-    output_dir  = Path(args.output_dir)
+    output_dir = Path(args.output_dir)
 
-    all_records: List[dict] = []
+    # --from-csv mode: skip MC loop, just regenerate outputs from saved CSV
+    if args.from_csv is not None:
+        csv_path = Path(args.from_csv)
+        if not csv_path.exists():
+            logger.error("--from-csv path not found: %s", csv_path)
+            sys.exit(1)
+        all_records = _load_records_from_csv(csv_path)
+        sigmas = sorted({r["sigma"] for r in all_records})
+        logger.info("Loaded %d records from %s", len(all_records), csv_path)
+        _write_csvs(all_records, output_dir)
+        _print_summary_table(all_records, sigmas)
+        _plot_mc(all_records, output_dir, sigmas)
+        logger.info("Outputs regenerated in %s", output_dir)
+        return
+
+    results_dir = Path(args.results_dir)
+    all_records = []
 
     for subject_id in args.subjects:
         logger.info("=" * 50)
         logger.info("Subject %d", subject_id)
         logger.info("=" * 50)
 
-        # Load test data once per subject
         _, _, X_test, y_test = load_moabb(args.moabb_dataset, subject_id)
         y_test_0 = y_test - 1
         sfreq = 250.0  # BNCI2014_001

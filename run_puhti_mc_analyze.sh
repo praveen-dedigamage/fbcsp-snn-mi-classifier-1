@@ -75,14 +75,10 @@ with open(merged, "w", newline="") as f:
 print(f"Merged {len(all_rows)} rows → {merged}")
 PYEOF
 
-# Re-run the Python analysis to generate combined summary + plot
+# Regenerate combined summary CSV + plot from the merged raw CSV
 python run_butterworth_mc.py \
-    --results-dir /dev/null \
-    --subjects ${SUBJECTS} \
-    --n-folds 0 \
-    --n-draws 0 \
-    --output-dir "${OUTPUT_DIR}" \
-    --moabb-dataset BNCI2014_001 2>/dev/null || true
+    --from-csv "${OUTPUT_DIR}/mc_raw.csv" \
+    --output-dir "${OUTPUT_DIR}"
 
 # Print the summary table from the merged CSV
 python - <<'PYEOF'
