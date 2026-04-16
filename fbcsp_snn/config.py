@@ -250,14 +250,6 @@ def build_parser() -> argparse.ArgumentParser:
                               "MI >= mi_fraction * max_MI. When set, overrides "
                               "--feature-percentile. Try 0.05-0.3.")
 
-    # ---- infer / aggregate: PTQ CSP quantization ----
-    for p in (infer_p, agg_p):
-        p.add_argument("--csp-bits", type=int, default=None,
-                       choices=[4, 6, 8],
-                       help="Simulate analog crossbar CSP weight precision "
-                            "(4/6/8-bit symmetric per-tensor PTQ). "
-                            "Default: None (FP32).")
-
     # ---- infer ----
     infer_p = sub.add_parser("infer", parents=[shared], help="Run inference.")
     infer_p.add_argument("--fold", type=int, required=True)
@@ -267,6 +259,14 @@ def build_parser() -> argparse.ArgumentParser:
     agg_p = sub.add_parser("aggregate", parents=[shared],
                             help="Aggregate fold results.")
     agg_p.add_argument("--n-folds", type=int, default=10)
+
+    # ---- infer + aggregate: PTQ CSP quantization ----
+    for p in (infer_p, agg_p):
+        p.add_argument("--csp-bits", type=int, default=None,
+                       choices=[4, 6, 8],
+                       help="Simulate analog crossbar CSP weight precision "
+                            "(4/6/8-bit symmetric per-tensor PTQ). "
+                            "Default: None (FP32).")
 
     return parser
 
