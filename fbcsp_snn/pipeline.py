@@ -119,7 +119,7 @@ def _spikes_from_concat(
         Binary spikes ``(T, n_trials, n_features)``.
     """
     t = torch.from_numpy(X_concat).to(DEVICE).permute(2, 0, 1)  # (T, B, F)
-    return encode_tensor(t, cfg.base_thresh, cfg.adapt_inc, cfg.decay)
+    return encode_tensor(t, cfg.base_thresh, cfg.adapt_inc, cfg.decay, cfg.encoder_type)
 
 
 def _concat_projections(proj: dict) -> np.ndarray:
@@ -380,6 +380,7 @@ def _run_single_fold(
         "bands":              [[float(lo), float(hi)] for lo, hi in bands],
         "adaptive_bands":     cfg.adaptive_bands,
         "filter_type":        cfg.filter_type,
+        "encoder_type":       cfg.encoder_type,
         "euclidean_alignment": cfg.euclidean_alignment,
         "riemannian_mean":    cfg.riemannian_mean,
         "csp_m":              m,
@@ -571,6 +572,7 @@ def run_infer(cfg: Config) -> None:
 
     # Preprocessing chain
     filter_type = params.get("filter_type", "butterworth")
+    cfg.encoder_type = params.get("encoder_type", "delta")
     X_bands = apply_filter_bank(X_test, bands, sfreq, order=4, filter_type=filter_type)
     proj = csp.transform(X_bands)
     X_concat = _concat_projections(proj)
@@ -763,6 +765,7 @@ def run_aggregate(cfg: Config) -> None:
                 mibif = pickle.load(f)
 
         ft      = params.get("filter_type", "butterworth")
+        cfg.encoder_type = params.get("encoder_type", "delta")
         X_bands = apply_filter_bank(X_test, bands, sfreq, order=4, filter_type=ft)
         proj    = csp.transform(X_bands)
         X_concat = _concat_projections(proj)

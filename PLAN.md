@@ -9,26 +9,27 @@ for a publishable paper.
 
 Without these, the paper either can't be written or won't survive review.
 
-- [ ] **1. Bessel-filter experiment.**
-  Already coded (commit 1631610), already on the queue. Submit to Puhti when BUs return.
-  Deliverable: one row in the master results table; addresses the S7 group-delay regression.
-  Effort: 1 day of work + ~12 hours of Puhti wall time.
+- [x] **1. Bessel-filter experiment.** ✓ CLOSED 2026-04-16
+  Result: 63.4% ±14.0 — −2.8 pp vs causal-Butterworth (66.2%), −3.8 pp vs zero-phase (67.2%).
+  Flat group-delay hypothesis failed; S7 still regressed (69.3 vs 70.9). Only S2 (50.8%, best
+  ever) and S4 (64.0%) benefit. Causal Butterworth remains the neuromorphic-compatible choice.
 
-- [ ] **2. Adaptive ADM encoder.**
-  Replace `|x[t] − x[t−1]|` with reference-tracking `|x − v_ref|` plus ON/OFF polarity.
-  Validate locally on one subject with reconstruction RMSE < 5%.
-  Effort: ~30 lines of code in `encoding.py`, plus pipeline plumbing for doubled feature
-  dimension. ~1 day.
+- [x] **2. Adaptive ADM encoder.** ✓ CLOSED 2026-04-16
+  Result: 67.4% ±15.2 — +0.2pp vs static6-overlap (67.2%), new best.
+  S2 +6.7pp, S9 +3.5pp, S1 +1.7pp drive the gain; S6 −4.2pp main loser.
+  ADM adds direct silicon precedent (Lichtsteiner & Liu address-event camera).
 
-- [ ] **3. Persistent-state flag.**
-  Hoist filter `zi`, encoder `v_ref`, and LIF membrane potential `V` out of per-trial scope
-  so they persist across trial boundaries. Required for the streaming claim and for any future
-  Loihi deployment.
-  Effort: ~30 lines across `encoding.py` and `pipeline.py`. ~1 day.
+- [x] **3. Persistent-state flag.** ✓ RESOLVED 2026-04-16 — no code change needed.
+  True persistent state across trial boundaries is invalid for epoched MI data: the paradigm
+  includes non-MI cues and rest periods between imagery windows that the pipeline never sees.
+  Connecting end of MI trial N directly to start of trial N+1 creates fake continuity.
+  Resolution (option 2): each primitive is individually streaming-compatible (causal IIR zi,
+  ADM v_ref, LIF V). Scoped honestly in the methods section — benchmarked on epoched data
+  per BNCI2014_001 protocol, full-stream deployment left for hardware validation (item #8).
 
-- [ ] **4. ADM A/B sweep across all 9 subjects, 5 folds.**
-  Frame as parity check (Δmean ≥ −1.0 pp is success, not failure).
-  Effort: 1 Puhti submit, no new code. ~12 hours wall time.
+- [x] **4. ADM A/B sweep across all 9 subjects, 5 folds.** ✓ CLOSED 2026-04-16
+  Result: 67.4% ±15.2 — +0.2pp vs delta encoder (67.2%). Parity check passed.
+  Completed as part of item #2 (Results_adm_static6 run).
 
 - [ ] **5. CSP weight quantization sweep.**
   Quantize CSP eigenvectors to 4-, 6-, 8-bit symmetric per-tensor. Run all 9 subjects at

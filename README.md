@@ -370,27 +370,32 @@ All results: session 1 train / session 2 test, FP32.
 | V4 | 66.9% | ±14.5 | +2.1pp | 9 bands, 6 CSP/band |
 | V4.1 | 66.9% | ±13.8 | +2.1pp | 12 bands, 8 CSP/band, mff=0.15 |
 | V4.2-augwin | 67.1% | ±15.0 | +2.3pp | V4.1 + sliding-window CSP augmentation |
-| **static6-overlap** | **67.2%** | **±14.6** | **+2.4pp** | **6 Hz static bands, 4 Hz step, 2 Hz overlap, 4–30 Hz ⭐ NEW BEST** |
+| static6-overlap | 67.2% | ±14.6 | +2.4pp | 6 Hz static bands, 4 Hz step, 2 Hz overlap, 4–30 Hz |
 | causal-butterworth | 66.2% | ±14.7 | +1.4pp | static6-overlap + causal `sosfilt` (neuromorphic-compatible) |
+| causal-bessel | 63.4% | ±14.0 | +0.6pp | static6-overlap + causal Bessel — flat group delay did not help S7 |
+| **ADM encoder** | **67.4%** | **±15.2** | **+2.6pp** | **static6-overlap + ON/OFF ADM encoder (doubled features) ⭐ NEW BEST** |
 
-### static6-overlap — per-subject results (⭐ current best)
+### ADM encoder — per-subject results (⭐ current best)
 
-6 static overlapping bands, 8 CSP filters/band, sliding-window augmentation, zero-phase filter:
+static6-overlap bands, 8 CSP filters/band, sliding-window augmentation, zero-phase filter, ADM encoder:
 
-| Subject | FP32 Acc | vs Baseline |
-|---|---|---|
-| S1 | 83.6% | −1.7pp |
-| S2 | 43.5% | −1.9pp |
-| S3 | 77.2% | +3.4pp |
-| S4 | 63.0% | +8.7pp |
-| S5 | 45.7% | +1.3pp |
-| S6 | 54.0% | +2.3pp |
-| S7 | 75.7% | −0.9pp |
-| S8 | 81.4% | +1.8pp |
-| S9 | 79.8% | +7.4pp |
-| **Mean** | **67.2%** | **+2.4pp** |
+| Subject | FP32 Acc | vs static6-overlap | vs Baseline |
+|---|---|---|---|
+| S1 | 85.3% | +1.7pp | +0.0pp |
+| S2 | 50.2% | +6.7pp | +4.8pp |
+| S3 | 76.0% | −1.2pp | +2.2pp |
+| S4 | 61.0% | −2.0pp | +6.7pp |
+| S5 | 44.1% | −1.6pp | −0.3pp |
+| S6 | 49.8% | −4.2pp | −1.9pp |
+| S7 | 75.7% | 0.0pp | −0.9pp |
+| S8 | 80.8% | −0.6pp | +1.2pp |
+| S9 | 83.3% | +3.5pp | +10.9pp |
+| **Mean** | **67.4%** | **+0.2pp** | **+2.6pp** |
 
-**Target:** 70%+ mean FP32. Gap remaining: **2.8pp**.
+S2 (+6.7pp) and S9 (+3.5pp) drive the gain; S6 (−4.2pp) is the main loser.
+ADM gives the pipeline a direct silicon precedent (Lichtsteiner & Liu address-event camera).
+
+**Target:** 70%+ mean FP32. Gap remaining: **2.6pp**.
 
 ### Causal filter — neuromorphic accuracy cost
 
@@ -410,8 +415,8 @@ Replacing zero-phase `sosfiltfilt` with causal `sosfilt` for neuromorphic compat
 | **Mean** | **67.2%** | **66.2%** | **−1.0pp** |
 
 S7 is most affected: needs broad beta coverage (peak at ~23 Hz); causal Butterworth group delay
-at beta frequencies shifts the spectral content. A Bessel filter (maximally flat group delay)
-is expected to recover part of this gap — **pending experiment**.
+at beta frequencies shifts the spectral content. A Bessel filter was tested but made S7 worse
+(69.3% vs 70.9%) — causal Butterworth remains the neuromorphic-compatible choice (−1.0pp vs zero-phase).
 
 ### V4.2-augwin — classifier comparison
 
@@ -894,13 +899,12 @@ evaluate_model(model_int8, ...) → test_acc_int8
 
 ## Roadmap
 
-### In progress / pending BU replenishment
+### In progress / pending
 
 | Priority | Task | Command | Expected outcome |
 |---|---|---|---|
-| 1 | **Bessel filter** (causal, maximally flat group delay) | `ARRAY_SCRIPT=run_puhti_static6.sh bash submit_puhti.sh Results_bessel_static6 --augment-windows --filter-type bessel` | Reduce S7 group-delay penalty vs causal Butterworth; target ≥ 67.2% with full causal claim |
-| 2 | **Multi-dataset compatibility test** (1 subject × fold 0) | `sbatch run_puhti_dataset_test.sh` (causal-filter branch) | Verify pipeline runs on PhysionetMI, Cho2017, BNCI2015_001 without errors |
-| 3 | **Full multi-dataset accuracy** (all subjects) | Submit per-dataset array jobs after compatibility confirmed | Cross-dataset generalisation benchmark |
+| 1 | **Multi-dataset compatibility test** (1 subject × fold 0) | `sbatch run_puhti_dataset_test.sh` (causal-filter branch) | Verify pipeline runs on PhysionetMI, Cho2017, BNCI2015_001 without errors |
+| 2 | **Full multi-dataset accuracy** (all subjects) | Submit per-dataset array jobs after compatibility confirmed | Cross-dataset generalisation benchmark |
 
 ### Completed experiments (closed)
 
@@ -908,8 +912,10 @@ evaluate_model(model_int8, ...) → test_acc_int8
 |---|---|
 | Adaptive 6–12 bands (V3–V4.1) | +2.1pp vs baseline; static bands match or beat adaptive |
 | Sliding-window CSP augmentation (V4.2-augwin) | +0.2pp; useful for covariance estimation |
-| 6 static overlapping bands 4–30 Hz (static6-overlap) | **+2.4pp — current best (67.2%)** |
+| 6 static overlapping bands 4–30 Hz (static6-overlap) | +2.4pp (67.2%) |
+| **ADM encoder (ON/OFF polarity)** | **+2.6pp — current best (67.4%)** |
 | Causal Butterworth filter (causal-filter branch) | −1.0pp vs zero-phase; neuromorphic-compatible |
+| Causal Bessel filter | −3.8pp vs zero-phase, −2.8pp vs causal Butterworth; S7 not recovered |
 | Ledoit-Wolf CSP regularisation | No gain; Tikhonov wins |
 | Adaptive MIBIF (mi_fraction 0.05–0.20) | Max 66.5%; percentile=50% wins |
 | Channel selection top-K (Approach A, K=5/8/12) | Ceiling at 67.1%; no global K beats static6 |
@@ -918,11 +924,9 @@ evaluate_model(model_int8, ...) → test_acc_int8
 
 ### Gap analysis — reaching 70%
 
-Current best: **67.2%** (2.8pp below target). Remaining opportunities:
+Current best: **67.4%** (2.6pp below target). Remaining opportunities:
 
-- **Bessel filter**: expected to recover ~0.5–1.0pp of the causal-Butterworth penalty for S7;
-  may also marginally improve zero-phase configuration
-- **Subject-specific band tuning**: S7 needs beta (20–26 Hz); S2/S5 are non-responders with
-  near-chance performance — gains must come from S4, S6, S9 (all ≥ 8pp below ceiling)
+- **CSP quantization sweep** (plan item #5): 4/6/8-bit eigenvectors; target ≤1pp drop at 6-bit
+- **Persistent-state flag** (plan item #3): stream-compatible encoder/filter state across trials
+- **Subject-specific band tuning**: S6 (49.8%, ADM hurts) needs different treatment; S2/S5 remain non-responders
 - **Ensemble / majority vote across folds**: low-effort +0.5–1.0pp potential with no new training
-- **Transfer learning / domain adaptation**: address cross-session non-stationarity for S2/S5/S6
