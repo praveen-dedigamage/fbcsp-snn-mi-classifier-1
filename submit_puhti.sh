@@ -89,9 +89,11 @@ done
 echo "Array tasks: ${ARRAY_TASKS}"
 echo ""
 
+ENCODER_TYPE="${ENCODER_TYPE:-delta}"
+
 TRAIN_OUTPUT=$(sbatch \
     --array="${ARRAY_TASKS}" \
-    --export="ALL,RESULTS_DIR=${RESULTS_DIR},EXTRA_ARGS=${EXTRA_ARGS}" \
+    --export="ALL,RESULTS_DIR=${RESULTS_DIR},ENCODER_TYPE=${ENCODER_TYPE},EXTRA_ARGS=${EXTRA_ARGS}" \
     "${ARRAY_SCRIPT}")
 TRAIN_JOBID=$(echo "${TRAIN_OUTPUT}" | awk '{print $4}')
 echo "${TRAIN_OUTPUT}"
