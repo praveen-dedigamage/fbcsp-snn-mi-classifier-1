@@ -32,10 +32,34 @@ Without these, the paper either can't be written or won't survive review.
   Completed as part of item #2 (Results_adm_static6 run).
 
 - [ ] **5. CSP weight quantization sweep.**
-  Quantize CSP eigenvectors to 4-, 6-, 8-bit symmetric per-tensor. Run all 9 subjects at
-  each level. Mirror the existing INT8 SNN methodology.
   Deliverable: accuracy-vs-precision cliff plot. Target: ≤1 pp drop at 6-bit.
-  Effort: ~50 lines for the quantization wrapper, then 3 Puhti submits. ~3 days.
+
+  Pre-analysis complete (2026-04-16) — `analyze_csp_weights.py` on Results_adm_static6:
+  - 4-bit: NRMSE 20–29%, SQNR 10–14 dB — analytically too coarse (step ≈ 1×std)
+  - 6-bit: NRMSE 4.7–6.4%, SQNR 24–27 dB — borderline, S6 worst (outlier-driven)
+  - 8-bit: NRMSE 1.1–1.6%, SQNR 36–39 dB — safe for all subjects
+  - S6 has the heaviest outliers (abs_max=7.4 vs p99=2.7) — drives worst-case at all levels
+  - Keep 4-bit as cliff marker even though it will fail
+
+  Subtasks:
+
+  - [ ] **5a. Implement --csp-bits flag (PTQ inference path).**
+    Add symmetric per-tensor quantization to CSP weights after loading from pickle,
+    before projection. Reuse existing trained models from Results_adm_static6 — no
+    retraining. ~30 lines in quantization.py + pipeline.py.
+
+  - [ ] **5b. Run PTQ inference sweep (4, 6, 8-bit) on Puhti.**
+    Re-run inference only on all 9 subjects × 5 folds at each bit-width using
+    existing trained models. Command: `python main.py infer --csp-bits N ...`
+    Deliverable: accuracy table per bit-width.
+
+  - [ ] **5c. Evaluate PTQ results — retrain decision.**
+    If 6-bit PTQ drops ≤1 pp → done, paper claim holds.
+    If 6-bit PTQ drops >1 pp → proceed to 5d (QAT).
+
+  - [ ] **5d. [Conditional] QAT — retrain SNN with quantized CSP weights.**
+    Only if 5c fails. Add --csp-bits to training path. 3 × 45 = 135 Puhti jobs.
+    Answers: "SNN trained and deployed under hardware-precision constraints."
 
 - [ ] **6. Butterworth coefficient sensitivity (Monte Carlo).**
   Perturb each SOS coefficient with Gaussian noise at σ = 1%, 2%, 5%, 100 draws per level.
