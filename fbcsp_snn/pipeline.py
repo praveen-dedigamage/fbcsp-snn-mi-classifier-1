@@ -50,7 +50,7 @@ from fbcsp_snn.evaluation import compute_accuracy, compute_confusion_matrix
 from fbcsp_snn.mibif import MIBIFSelector
 from fbcsp_snn.model import SNNClassifier, maybe_compile
 from fbcsp_snn.preprocessing import PairwiseCSP, ZNormaliser, apply_filter_bank, window_filter_bank
-from fbcsp_snn.quantization import quantize_model, quantization_report
+from fbcsp_snn.quantization import quantize_csp_filters, quantize_model, quantization_report
 from fbcsp_snn.training import evaluate_model, train_fold
 from fbcsp_snn.visualization import (
     plot_band_selection,
@@ -328,6 +328,27 @@ def _run_single_fold(
     quantization_report(val_acc_fp32,  val_acc_int8,  label="val")
     quantization_report(test_acc_fp32, test_acc_int8, label="test")
 
+    # ---- PTQ CSP evaluation (4/6/8-bit analog crossbar simulation) ----
+    # Quantize only the CSP spatial filters; SNN weights remain FP32.
+    # Runs on the already-fitted znorm and mibif to ensure no data leakage.
+    saved_csp_filters = csp.filters_
+    ptq_accs: dict = {}
+    for bits in [8, 6, 4]:
+        csp.filters_ = quantize_csp_filters(saved_csp_filters, bits=bits)
+        proj_te_q    = csp.transform(X_bands_te)
+        X_concat_q   = _concat_projections(proj_te_q)
+        X_norm_q     = znorm.transform(X_concat_q)
+        spikes_q     = _spikes_from_concat(X_norm_q, cfg)
+        if mibif is not None:
+            spikes_q = mibif.transform(spikes_q)
+        acc_q, _ = evaluate_model(model, spikes_q, y_test_0, DEVICE)
+        ptq_accs[bits] = acc_q
+        logger.info(
+            "Fold %d  CSP %d-bit PTQ  test: %.1f%%",
+            fold_idx, bits, acc_q * 100,
+        )
+    csp.filters_ = saved_csp_filters  # restore FP32 filters before pickling
+
     # ---- Neuron traces (one test-set batch) ----
     model.eval()
     with torch.no_grad():
@@ -399,6 +420,10 @@ def _run_single_fold(
         "val_acc_int8":       round(val_acc_int8, 6),
         "test_acc_fp32":      round(test_acc_fp32, 6),
         "test_acc_int8":      round(test_acc_int8, 6),
+        # PTQ CSP — analog crossbar precision sweep (FP32 SNN, quantized CSP only)
+        "test_acc_csp_8bit":  round(ptq_accs[8], 6),
+        "test_acc_csp_6bit":  round(ptq_accs[6], 6),
+        "test_acc_csp_4bit":  round(ptq_accs[4], 6),
         # Classical baselines (log-var features, same z-norm, no spike encoding)
         "val_acc_lda":        round(baseline_results["val_acc_lda"],  6),
         "test_acc_lda":       round(baseline_results["test_acc_lda"], 6),
@@ -410,9 +435,10 @@ def _run_single_fold(
 
     logger.info(
         "Fold %d saved to %s  "
-        "(FP32 test %.1f%%  INT8 test %.1f%%)",
+        "(FP32 %.1f%%  CSP-8b %.1f%%  CSP-6b %.1f%%  CSP-4b %.1f%%)",
         fold_idx, fold_dir,
-        test_acc_fp32 * 100, test_acc_int8 * 100,
+        test_acc_fp32 * 100,
+        ptq_accs[8] * 100, ptq_accs[6] * 100, ptq_accs[4] * 100,
     )
     return params
 
@@ -503,12 +529,24 @@ def run_train(cfg: Config) -> None:
     )
 
     if fold_metrics:
-        mean_test_fp32 = np.mean([m["test_acc_fp32"] for m in fold_metrics])
-        mean_test_int8 = np.mean([m["test_acc_int8"] for m in fold_metrics])
+        def _fmean(key: str) -> float:
+            vals = [m[key] for m in fold_metrics if key in m]
+            return float(np.mean(vals)) if vals else float("nan")
+
         logger.info(
-            "Subject %d  mean test FP32 %.1f%%  INT8 %.1f%%",
-            cfg.subject_id, mean_test_fp32 * 100, mean_test_int8 * 100,
+            "Subject %d  mean test  FP32 %.1f%%  CSP-8b %.1f%%  CSP-6b %.1f%%  CSP-4b %.1f%%",
+            cfg.subject_id,
+            _fmean("test_acc_fp32")     * 100,
+            _fmean("test_acc_csp_8bit") * 100,
+            _fmean("test_acc_csp_6bit") * 100,
+            _fmean("test_acc_csp_4bit") * 100,
         )
+
+    # Auto-aggregate when all folds were run in one shot (no --fold flag).
+    # Skipped in SLURM array mode where each fold is a separate job.
+    if cfg.fold is None and len(fold_metrics) == cfg.n_folds:
+        logger.info("All folds complete — running aggregate …")
+        run_aggregate(cfg)
 
 
 # ---------------------------------------------------------------------------
@@ -564,15 +602,19 @@ def run_infer(cfg: Config) -> None:
     with open(fold_dir / "znorm.pkl", "rb") as f:
         znorm: ZNormaliser = pickle.load(f)
 
+    if cfg.csp_bits is not None:
+        csp.filters_ = quantize_csp_filters(csp.filters_, bits=cfg.csp_bits)
+        logger.info("CSP weights quantized to %d-bit (PTQ)", cfg.csp_bits)
+
     mibif: Optional[MIBIFSelector] = None
     mibif_path = fold_dir / "mibif.pkl"
     if mibif_path.exists():
         with open(mibif_path, "rb") as f:
             mibif = pickle.load(f)
 
-    # Preprocessing chain
-    filter_type = params.get("filter_type", "butterworth")
-    cfg.encoder_type = params.get("encoder_type", "delta")
+    # Preprocessing chain — restore training-time settings from saved params
+    filter_type      = params.get("filter_type",  "butterworth")
+    cfg.encoder_type = params.get("encoder_type", cfg.encoder_type)
     X_bands = apply_filter_bank(X_test, bands, sfreq, order=4, filter_type=filter_type)
     proj = csp.transform(X_bands)
     X_concat = _concat_projections(proj)
@@ -670,7 +712,9 @@ def run_aggregate(cfg: Config) -> None:
     csv_path = subject_dir / "summary.csv"
     fieldnames = [
         "fold", "best_val_acc_fp32", "best_epoch", "stopped_epoch",
-        "val_acc_fp32", "val_acc_int8", "test_acc_fp32", "test_acc_int8",
+        "val_acc_fp32", "val_acc_int8",
+        "test_acc_fp32", "test_acc_int8",
+        "test_acc_csp_8bit", "test_acc_csp_6bit", "test_acc_csp_4bit",
         "val_acc_lda", "test_acc_lda", "val_acc_svm", "test_acc_svm",
     ]
     with open(csv_path, "w", newline="") as f:
@@ -684,18 +728,21 @@ def run_aggregate(cfg: Config) -> None:
         return [r[key] for r in rows if key in r]
 
     mean_row = {
-        "fold":              "mean",
-        "best_val_acc_fp32": round(float(np.mean(_col("best_val_acc_fp32"))), 6),
-        "best_epoch":        "",
-        "stopped_epoch":     "",
-        "val_acc_fp32":      round(float(np.mean(_col("val_acc_fp32"))),  6),
-        "val_acc_int8":      round(float(np.mean(_col("val_acc_int8"))),  6),
-        "test_acc_fp32":     round(float(np.mean(_col("test_acc_fp32"))), 6),
-        "test_acc_int8":     round(float(np.mean(_col("test_acc_int8"))), 6),
-        "val_acc_lda":       round(float(np.mean(_col("val_acc_lda"))),   6) if _col("val_acc_lda")  else "",
-        "test_acc_lda":      round(float(np.mean(_col("test_acc_lda"))),  6) if _col("test_acc_lda") else "",
-        "val_acc_svm":       round(float(np.mean(_col("val_acc_svm"))),   6) if _col("val_acc_svm")  else "",
-        "test_acc_svm":      round(float(np.mean(_col("test_acc_svm"))),  6) if _col("test_acc_svm") else "",
+        "fold":                "mean",
+        "best_val_acc_fp32":   round(float(np.mean(_col("best_val_acc_fp32"))), 6),
+        "best_epoch":          "",
+        "stopped_epoch":       "",
+        "val_acc_fp32":        round(float(np.mean(_col("val_acc_fp32"))),  6),
+        "val_acc_int8":        round(float(np.mean(_col("val_acc_int8"))),  6),
+        "test_acc_fp32":       round(float(np.mean(_col("test_acc_fp32"))), 6),
+        "test_acc_int8":       round(float(np.mean(_col("test_acc_int8"))), 6),
+        "test_acc_csp_8bit":   round(float(np.mean(_col("test_acc_csp_8bit"))), 6) if _col("test_acc_csp_8bit") else "",
+        "test_acc_csp_6bit":   round(float(np.mean(_col("test_acc_csp_6bit"))), 6) if _col("test_acc_csp_6bit") else "",
+        "test_acc_csp_4bit":   round(float(np.mean(_col("test_acc_csp_4bit"))), 6) if _col("test_acc_csp_4bit") else "",
+        "val_acc_lda":         round(float(np.mean(_col("val_acc_lda"))),   6) if _col("val_acc_lda")  else "",
+        "test_acc_lda":        round(float(np.mean(_col("test_acc_lda"))),  6) if _col("test_acc_lda") else "",
+        "val_acc_svm":         round(float(np.mean(_col("val_acc_svm"))),   6) if _col("val_acc_svm")  else "",
+        "test_acc_svm":        round(float(np.mean(_col("test_acc_svm"))),  6) if _col("test_acc_svm") else "",
     }
     with open(csv_path, "a", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
@@ -704,27 +751,32 @@ def run_aggregate(cfg: Config) -> None:
     logger.info("Summary CSV written: %s", csv_path)
 
     # Log table to stdout
+    _has_ptq = bool(_col("test_acc_csp_8bit"))
     logger.info("")
     logger.info(
-        "  %-6s  %-12s  %-12s  %-10s  %-10s",
-        "Fold", "TestFP32", "TestINT8", "LDA", "SVM",
+        "  %-6s  %-9s  %-9s  %-9s  %-9s  %-8s  %-8s",
+        "Fold", "FP32", "CSP-8b", "CSP-6b", "CSP-4b", "LDA", "SVM",
     )
-    logger.info("  " + "-" * 58)
+    logger.info("  " + "-" * 70)
     for r in rows:
         logger.info(
-            "  %-6s  %-12.1f  %-12.1f  %-10.1f  %-10.1f",
+            "  %-6s  %-9.1f  %-9.1f  %-9.1f  %-9.1f  %-8.1f  %-8.1f",
             r["fold"],
-            r["test_acc_fp32"]  * 100,
-            r["test_acc_int8"]  * 100,
-            r.get("test_acc_lda", 0) * 100,
-            r.get("test_acc_svm", 0) * 100,
+            r["test_acc_fp32"]                    * 100,
+            r.get("test_acc_csp_8bit", float("nan")) * 100,
+            r.get("test_acc_csp_6bit", float("nan")) * 100,
+            r.get("test_acc_csp_4bit", float("nan")) * 100,
+            r.get("test_acc_lda", 0)              * 100,
+            r.get("test_acc_svm", 0)              * 100,
         )
-    logger.info("  " + "-" * 58)
+    logger.info("  " + "-" * 70)
     logger.info(
-        "  %-6s  %-12.1f  %-12.1f  %-10.1f  %-10.1f",
+        "  %-6s  %-9.1f  %-9.1f  %-9.1f  %-9.1f  %-8.1f  %-8.1f",
         "MEAN",
-        mean_row["test_acc_fp32"]  * 100,   # type: ignore[operator]
-        mean_row["test_acc_int8"]  * 100,   # type: ignore[operator]
+        mean_row["test_acc_fp32"]  * 100,                                         # type: ignore[operator]
+        (mean_row["test_acc_csp_8bit"] * 100) if _has_ptq else float("nan"),      # type: ignore[operator]
+        (mean_row["test_acc_csp_6bit"] * 100) if _has_ptq else float("nan"),      # type: ignore[operator]
+        (mean_row["test_acc_csp_4bit"] * 100) if _has_ptq else float("nan"),      # type: ignore[operator]
         (mean_row["test_acc_lda"]  * 100) if mean_row.get("test_acc_lda") else 0.0,
         (mean_row["test_acc_svm"]  * 100) if mean_row.get("test_acc_svm") else 0.0,
     )
@@ -758,14 +810,17 @@ def run_aggregate(cfg: Config) -> None:
             logger.warning("Preprocessing pickle missing for fold %s — skip", fold_idx)
             continue
 
+        if cfg.csp_bits is not None:
+            csp.filters_ = quantize_csp_filters(csp.filters_, bits=cfg.csp_bits)
+
         mibif_path = fold_dir / "mibif.pkl"
         mibif: Optional[MIBIFSelector] = None
         if mibif_path.exists():
             with open(mibif_path, "rb") as f:
                 mibif = pickle.load(f)
 
-        ft      = params.get("filter_type", "butterworth")
-        cfg.encoder_type = params.get("encoder_type", "delta")
+        ft = params.get("filter_type", "butterworth")
+        cfg.encoder_type = params.get("encoder_type", cfg.encoder_type)
         X_bands = apply_filter_bank(X_test, bands, sfreq, order=4, filter_type=ft)
         proj    = csp.transform(X_bands)
         X_concat = _concat_projections(proj)
@@ -790,7 +845,7 @@ def run_aggregate(cfg: Config) -> None:
         state = torch.load(model_path, map_location=DEVICE)
         model.load_state_dict(state)
 
-        _, preds_fp32 = evaluate_model(model, spikes, y_test_0, DEVICE)
+        acc_fp32, preds_fp32 = evaluate_model(model, spikes, y_test_0, DEVICE)
         cm_fp32_sum += compute_confusion_matrix(
             y_test_0, preds_fp32, n_classes=n_classes, normalize=False
         )
