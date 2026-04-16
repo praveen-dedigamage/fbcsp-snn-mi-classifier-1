@@ -31,11 +31,27 @@ Without these, the paper either can't be written or won't survive review.
   Result: 67.4% ±15.2 — +0.2pp vs delta encoder (67.2%). Parity check passed.
   Completed as part of item #2 (Results_adm_static6 run).
 
-- [ ] **5. CSP weight quantization sweep.**
+- [ ] **5. CSP weight quantization sweep.** *(S1+S2 complete — PASSING)*
   Quantize CSP eigenvectors to 4-, 6-, 8-bit symmetric per-tensor. Run all 9 subjects at
   each level. Mirror the existing INT8 SNN methodology.
   Deliverable: accuracy-vs-precision cliff plot. Target: ≤1 pp drop at 6-bit.
   Effort: ~50 lines for the quantization wrapper, then 3 Puhti submits. ~3 days.
+  **Partial result (2026-04-16):** S1 82.6%→82.8% at 4-bit (+0.2pp); S2 50.5%→51.2% (+0.7pp).
+  Zero quantization penalty. Submit remaining 7 subjects to complete the sweep.
+
+  **Contingency 5a — Per-filter quantization (if per-tensor drop >2 pp at 6-bit).**
+  Each CSP eigenvector gets its own scale factor: `scale_i = max(|w_i|) / (2^(bits-1) - 1)`.
+  Reduces outlier-driven quantization error with no runtime cost. ~20 lines in
+  `quantization.py`. Re-run the same Puhti sweep.
+
+  **Contingency 5b — QAT with frozen quantized CSP (if 5a still fails).**
+  Train the SNN with CSP outputs already quantized to target precision (8-, 6-, 4-bit).
+  CSP filters are quantized before CSP projection during the training loop; the SNN learns
+  to work with the lower-precision features. CSP filters themselves are not updated.
+  Pipeline change: in `_run_single_fold`, quantize `csp.filters_` to target bits before
+  calling `csp.transform` on both train and validation data within the training loop.
+  Restore FP32 filters before saving artifacts. Three separate trained models per subject
+  (one per target precision). Effort: ~50 lines in `pipeline.py` + 3× Puhti submit time.
 
 - [ ] **6. Butterworth coefficient sensitivity (Monte Carlo).**
   Perturb each SOS coefficient with Gaussian noise at σ = 1%, 2%, 5%, 100 draws per level.
