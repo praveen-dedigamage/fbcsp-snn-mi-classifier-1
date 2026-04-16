@@ -319,14 +319,28 @@ def _write_csvs(records: List[dict], output_dir: Path) -> None:
     """Write mc_raw.csv and mc_summary.csv."""
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Raw draws
+    fieldnames = ["subject", "fold", "sigma", "draw", "accuracy", "baseline_acc", "acc_drop"]
+
+    # Raw draws — merged file
     raw_path = output_dir / "mc_raw.csv"
     with open(raw_path, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=["subject", "fold", "sigma", "draw",
-                                               "accuracy", "baseline_acc", "acc_drop"])
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(records)
     logger.info("Raw results: %s", raw_path)
+
+    # Per-subject files for array-job merging
+    from collections import defaultdict
+    by_subject: Dict[int, List[dict]] = defaultdict(list)
+    for r in records:
+        by_subject[r["subject"]].append(r)
+    for subj, subj_records in by_subject.items():
+        subj_path = output_dir / f"mc_raw_S{subj}.csv"
+        with open(subj_path, "w", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(subj_records)
+        logger.info("Subject %d raw: %s", subj, subj_path)
 
     # Summary: mean ± std per subject per sigma
     from collections import defaultdict
