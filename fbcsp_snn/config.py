@@ -114,6 +114,7 @@ class Config:
     window_step: float = 0.5       # seconds → 75 % overlap at 250 Hz
 
     # Encoding
+    encoder_type: str = "delta"   # 'delta' or 'adm'
     base_thresh: float = 0.001
     adapt_inc: float = 0.6
     decay: float = 0.95
@@ -221,6 +222,10 @@ def build_parser() -> argparse.ArgumentParser:
     train_p.add_argument("--window-step", type=float, default=0.5,
                          help="Sliding window step in seconds (default 0.5 → "
                               "75%% overlap at 250 Hz).")
+    train_p.add_argument("--encoder-type", type=str, default="delta",
+                         choices=["delta", "adm"],
+                         help="Spike encoder: 'delta' (adaptive threshold, default) or "
+                              "'adm' (ON/OFF polarity; doubles feature dimension).")
     train_p.add_argument("--base-thresh", type=float, default=0.001)
     train_p.add_argument("--adapt-inc", type=float, default=0.6)
     train_p.add_argument("--decay", type=float, default=0.95)
@@ -288,7 +293,7 @@ def config_from_args(args: argparse.Namespace) -> Config:
         "band_range", "bandwidth", "band_step", "min_fisher_fraction", "filter_type",
         "csp_components_per_band", "lambda_r", "euclidean_alignment", "riemannian_mean", "csp_ledoit_wolf",
         "augment_windows", "window_duration", "window_step",
-        "base_thresh", "adapt_inc", "decay",
+        "encoder_type", "base_thresh", "adapt_inc", "decay",
         "hidden_neurons", "population_per_class", "beta", "dropout_prob",
         "lr", "weight_decay", "epochs", "early_stopping_patience",
         "early_stopping_warmup", "spiking_prob",

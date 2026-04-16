@@ -612,10 +612,9 @@ def run_infer(cfg: Config) -> None:
         with open(mibif_path, "rb") as f:
             mibif = pickle.load(f)
 
-    # Preprocessing chain — restore training-time encoder and filter settings
-    cfg.filter_type   = params.get("filter_type",   cfg.filter_type)
-    cfg.encoder_type  = params.get("encoder_type",  cfg.encoder_type)
-    filter_type = cfg.filter_type
+    # Preprocessing chain — restore training-time settings from saved params
+    filter_type      = params.get("filter_type",  "butterworth")
+    cfg.encoder_type = params.get("encoder_type", cfg.encoder_type)
     X_bands = apply_filter_bank(X_test, bands, sfreq, order=4, filter_type=filter_type)
     proj = csp.transform(X_bands)
     X_concat = _concat_projections(proj)
@@ -820,10 +819,9 @@ def run_aggregate(cfg: Config) -> None:
             with open(mibif_path, "rb") as f:
                 mibif = pickle.load(f)
 
-        cfg.filter_type  = params.get("filter_type",  cfg.filter_type)
+        ft = params.get("filter_type", "butterworth")
         cfg.encoder_type = params.get("encoder_type", cfg.encoder_type)
-        X_bands = apply_filter_bank(X_test, bands, sfreq, order=4,
-                                    filter_type=cfg.filter_type)
+        X_bands = apply_filter_bank(X_test, bands, sfreq, order=4, filter_type=ft)
         proj    = csp.transform(X_bands)
         X_concat = _concat_projections(proj)
         X_norm  = znorm.transform(X_concat)
