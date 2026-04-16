@@ -50,7 +50,7 @@ from fbcsp_snn.evaluation import compute_accuracy, compute_confusion_matrix
 from fbcsp_snn.mibif import MIBIFSelector
 from fbcsp_snn.model import SNNClassifier, maybe_compile
 from fbcsp_snn.preprocessing import PairwiseCSP, ZNormaliser, apply_filter_bank, window_filter_bank
-from fbcsp_snn.quantization import quantize_model, quantization_report
+from fbcsp_snn.quantization import quantize_csp_filters, quantize_model, quantization_report
 from fbcsp_snn.training import evaluate_model, train_fold
 from fbcsp_snn.visualization import (
     plot_band_selection,
@@ -573,6 +573,8 @@ def run_infer(cfg: Config) -> None:
     # Preprocessing chain
     filter_type = params.get("filter_type", "butterworth")
     cfg.encoder_type = params.get("encoder_type", "delta")
+    if cfg.csp_bits is not None:
+        csp.filters_ = quantize_csp_filters(csp.filters_, bits=cfg.csp_bits)
     X_bands = apply_filter_bank(X_test, bands, sfreq, order=4, filter_type=filter_type)
     proj = csp.transform(X_bands)
     X_concat = _concat_projections(proj)
@@ -766,6 +768,8 @@ def run_aggregate(cfg: Config) -> None:
 
         ft      = params.get("filter_type", "butterworth")
         cfg.encoder_type = params.get("encoder_type", "delta")
+        if cfg.csp_bits is not None:
+            csp.filters_ = quantize_csp_filters(csp.filters_, bits=cfg.csp_bits)
         X_bands = apply_filter_bank(X_test, bands, sfreq, order=4, filter_type=ft)
         proj    = csp.transform(X_bands)
         X_concat = _concat_projections(proj)

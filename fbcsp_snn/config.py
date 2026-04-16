@@ -138,6 +138,9 @@ class Config:
     feature_percentile: float = 50.0
     mi_fraction: Optional[float] = None   # adaptive mode: keep MI >= mi_fraction*max_MI
 
+    # Post-training CSP quantization (PTQ inference only)
+    csp_bits: Optional[int] = None        # None = FP32; 4/6/8 = simulate analog crossbar
+
     # I/O
     results_dir: str = "Results"
     n_classes: Optional[int] = None
@@ -247,6 +250,14 @@ def build_parser() -> argparse.ArgumentParser:
                               "MI >= mi_fraction * max_MI. When set, overrides "
                               "--feature-percentile. Try 0.05-0.3.")
 
+    # ---- infer / aggregate: PTQ CSP quantization ----
+    for p in (infer_p, agg_p):
+        p.add_argument("--csp-bits", type=int, default=None,
+                       choices=[4, 6, 8],
+                       help="Simulate analog crossbar CSP weight precision "
+                            "(4/6/8-bit symmetric per-tensor PTQ). "
+                            "Default: None (FP32).")
+
     # ---- infer ----
     infer_p = sub.add_parser("infer", parents=[shared], help="Run inference.")
     infer_p.add_argument("--fold", type=int, required=True)
@@ -298,6 +309,7 @@ def config_from_args(args: argparse.Namespace) -> Config:
         "lr", "weight_decay", "epochs", "early_stopping_patience",
         "early_stopping_warmup", "spiking_prob",
         "feature_selection_method", "feature_percentile", "mi_fraction",
+        "csp_bits",
     ]
     for f in optional_fields:
         if hasattr(args, f):
