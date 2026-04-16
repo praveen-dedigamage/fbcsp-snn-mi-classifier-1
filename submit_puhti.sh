@@ -129,7 +129,7 @@ for JID in "${AGG_JOBIDS[@]}"; do
 done
 
 ANALYZE_OUTPUT=$(sbatch --dependency=${ANALYZE_DEP} \
-    --export="ALL,RESULTS_DIR=${RESULTS_DIR}" \
+    --export="ALL,RESULTS_DIR=${RESULTS_DIR},SUBJECTS=${SUBJECTS}" \
     run_puhti_analyze.sh)
 ANALYZE_JOBID=$(echo "${ANALYZE_OUTPUT}" | awk '{print $4}')
 echo "${ANALYZE_OUTPUT}"
