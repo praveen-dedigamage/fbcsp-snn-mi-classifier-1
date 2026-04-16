@@ -87,6 +87,57 @@ def _adaptive_threshold_encode_jit(
     return spikes
 
 
+@torch.jit.script
+def _adm_encode_jit(
+    x: torch.Tensor,
+    base_thresh: float,
+    adapt_inc: float,
+    decay: float,
+) -> torch.Tensor:
+    """JIT-compiled Asynchronous Delta Modulation (ADM) spike encoder.
+
+    Tracks the signal with a reference voltage ``v_ref``.  Emits an ON spike
+    when the signal rises above ``v_ref + threshold``, and an OFF spike when
+    it falls below ``v_ref - threshold``.  ``v_ref`` steps toward the signal
+    on every spike.  The threshold adapts identically to the delta encoder.
+
+    Doubles the feature dimension by concatenating ON and OFF spike channels.
+
+    Parameters
+    ----------
+    x : torch.Tensor
+        Input signal, shape ``(T, batch, n_features)``.
+    base_thresh, adapt_inc, decay : float
+        Encoding hyperparameters (shared with delta encoder).
+
+    Returns
+    -------
+    torch.Tensor
+        Binary spike tensor, shape ``(T, batch, 2 * n_features)``.
+    """
+    T: int = x.shape[0]
+    batch: int = x.shape[1]
+    n_feat: int = x.shape[2]
+
+    on_spikes  = torch.zeros_like(x)
+    off_spikes = torch.zeros_like(x)
+    v_ref      = x[0].clone()
+    threshold  = torch.full(
+        (batch, n_feat), base_thresh, dtype=x.dtype, device=x.device,
+    )
+
+    for t in range(T):
+        diff     = x[t] - v_ref
+        on_fire  = (diff >  threshold).to(x.dtype)
+        off_fire = (diff < -threshold).to(x.dtype)
+        on_spikes[t]  = on_fire
+        off_spikes[t] = off_fire
+        v_ref     = v_ref + on_fire * threshold - off_fire * threshold
+        threshold = threshold * decay + (on_fire + off_fire) * adapt_inc
+
+    return torch.cat([on_spikes, off_spikes], dim=2)
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -97,6 +148,7 @@ def encode_csp_projections(
     adapt_inc: float = 0.6,
     decay: float = 0.95,
     device: Optional[torch.device] = None,
+    encoder_type: str = "delta",
 ) -> torch.Tensor:
     """Encode a dict of CSP-projected time-series into binary spike trains.
 
@@ -137,7 +189,7 @@ def encode_csp_projections(
     # Move to device and permute → (n_samples, n_trials, total_features) = (T, B, F)
     X_t = torch.from_numpy(X).to(device).permute(2, 0, 1)
 
-    spikes = _adaptive_threshold_encode_jit(X_t, base_thresh, adapt_inc, decay)
+    spikes = encode_tensor(X_t, base_thresh, adapt_inc, decay, encoder_type)
 
     firing_rate = spikes.mean().item()
     logger.info(
@@ -154,6 +206,7 @@ def encode_tensor(
     base_thresh: float = 0.001,
     adapt_inc: float = 0.6,
     decay: float = 0.95,
+    encoder_type: str = "delta",
 ) -> torch.Tensor:
     """Encode a pre-arranged tensor ``(T, batch, features)`` to spikes.
 
@@ -166,10 +219,17 @@ def encode_tensor(
         Input signal ``(T, batch, n_features)``.
     base_thresh, adapt_inc, decay : float
         Encoding hyperparameters.
+    encoder_type : str
+        ``"delta"`` — adaptive-threshold delta encoder (default).
+        ``"adm"``   — Asynchronous Delta Modulation; doubles feature dimension
+        by emitting separate ON and OFF spike channels.
 
     Returns
     -------
     torch.Tensor
-        Binary spikes, same shape and device as *X*.
+        Binary spikes.  Shape matches *X* for ``"delta"``;
+        ``(T, batch, 2 * n_features)`` for ``"adm"``.
     """
+    if encoder_type == "adm":
+        return _adm_encode_jit(X, base_thresh, adapt_inc, decay)
     return _adaptive_threshold_encode_jit(X, base_thresh, adapt_inc, decay)
