@@ -34,6 +34,7 @@ N_FOLDS=5
 TASK_ID=${SLURM_ARRAY_TASK_ID}
 
 RESULTS_DIR="${RESULTS_DIR:-Results}"
+ENCODER_TYPE="${ENCODER_TYPE:-delta}"
 EXTRA_ARGS="${EXTRA_ARGS:-}"
 
 SUBJECT_ID=$(( (TASK_ID - 1) / N_FOLDS + 1 ))
@@ -73,6 +74,7 @@ python main.py train \
     --no-adaptive-bands \
     --freq-bands "[(4,10),(8,14),(12,18),(16,22),(20,26),(24,30)]" \
     --csp-components-per-band 8 \
+    --encoder-type "${ENCODER_TYPE}" \
     --hidden-neurons 64 \
     --population-per-class 20 \
     --beta 0.95 \
