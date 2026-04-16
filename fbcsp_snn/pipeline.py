@@ -810,9 +810,6 @@ def run_aggregate(cfg: Config) -> None:
             logger.warning("Preprocessing pickle missing for fold %s — skip", fold_idx)
             continue
 
-        if cfg.csp_bits is not None:
-            csp.filters_ = quantize_csp_filters(csp.filters_, bits=cfg.csp_bits)
-
         mibif_path = fold_dir / "mibif.pkl"
         mibif: Optional[MIBIFSelector] = None
         if mibif_path.exists():
