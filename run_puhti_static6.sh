@@ -86,7 +86,7 @@ python main.py train \
     --early-stopping-warmup 100 \
     --spiking-prob 0.7 \
     --feature-selection-method mibif \
-    --mi-fraction 0.1 \
+    --feature-percentile 50 \
     --results-dir "${RESULTS_DIR}" \
     ${EXTRA_ARGS}
 
