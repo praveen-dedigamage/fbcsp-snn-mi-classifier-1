@@ -31,13 +31,14 @@ Without these, the paper either can't be written or won't survive review.
   Result: 67.4% ±15.2 — +0.2pp vs delta encoder (67.2%). Parity check passed.
   Completed as part of item #2 (Results_adm_static6 run).
 
-- [ ] **5. CSP weight quantization sweep.** *(S1+S2 complete — PASSING)*
+- [x] **5. CSP weight quantization sweep.** ✓ CLOSED 2026-04-17
   Quantize CSP eigenvectors to 4-, 6-, 8-bit symmetric per-tensor. Run all 9 subjects at
   each level. Mirror the existing INT8 SNN methodology.
   Deliverable: accuracy-vs-precision cliff plot. Target: ≤1 pp drop at 6-bit.
   Effort: ~50 lines for the quantization wrapper, then 3 Puhti submits. ~3 days.
-  **Partial result (2026-04-16):** S1 82.6%→82.8% at 4-bit (+0.2pp); S2 50.5%→51.2% (+0.7pp).
-  Zero quantization penalty. Submit remaining 7 subjects to complete the sweep.
+  Result (2026-04-17): 65.8% FP32 mean (9 subjects, causal Butterworth, no augwin).
+  PTQ drop: 8-bit +0.18pp | 6-bit +0.23pp | 4-bit −0.89pp. <1pp at all levels.
+  Paper number: 65.8% hardware-compatible vs 67.4% software upper bound (−1.6pp causal cost).
 
   **Contingency 5a — Per-filter quantization (if per-tensor drop >2 pp at 6-bit).**
   Each CSP eigenvector gets its own scale factor: `scale_i = max(|w_i|) / (2^(bits-1) - 1)`.
