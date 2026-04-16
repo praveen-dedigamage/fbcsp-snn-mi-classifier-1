@@ -3,6 +3,44 @@
 Generated with Opus 4.6. Work through items in order; Priority 1 items are non-negotiable
 for a publishable paper.
 
+**Target venue:** IEEE Transactions on Neural Systems and Rehabilitation Engineering (TNSRE)
+
+**Paper claim:** First fully analog/mixed-signal neuromorphic BCI pipeline where every
+stage maps to a published silicon primitive — Gm-C filter bank, ReRAM crossbar (CSP),
+ADM encoder, LIF SNN — with validated tolerance to hardware imperfections at each stage.
+
+**Hardware-compatible paper number:** 65.8% mean FP32 (9 subjects, BNCI2014_001, 5-fold)
+
+---
+
+## Milestone tracker
+
+```
+DONE   Item 1  Bessel filter             63.4% — causal Butterworth wins
+DONE   Item 2  ADM encoder               67.4% software / 65.8% hardware-compatible
+DONE   Item 3  Persistent state          resolved — no code change
+DONE   Item 4  ADM A/B sweep             confirmed 9-subject
+DONE   Item 5  CSP PTQ sweep             <1pp drop at 4-bit ✓
+IN PROGRESS  Item 6  Butterworth MC      jobs 34038254/34038255 running
+TODO   Item 7  End-to-end stress test    1 submit after item 6
+TODO   Item 8  Lava simulation           critical path (~5 days)
+TODO   Item 9  Energy estimation         1 day after item 8
+TODO   Item 10 Cross-dataset             optional strengthener
+TODO   Items 11-16  Tables, figures, manuscript, release
+```
+
+## Estimated timeline from today (2026-04-17)
+
+```
++25 min    Item 6 results arrive
++2 days    Item 7 (end-to-end combined stress test)
++7 days    Item 8 (Lava simulation) ← critical path
++8 days    Item 9 (energy estimate)
++2 weeks   Item 10 (cross-dataset, optional)
++3 weeks   Items 11–12 (master table + mapping figure)
++6 weeks   Manuscript submission
+```
+
 ---
 
 ## Priority 1 — Required for a publishable paper
@@ -54,10 +92,13 @@ Without these, the paper either can't be written or won't survive review.
   Restore FP32 filters before saving artifacts. Three separate trained models per subject
   (one per target precision). Effort: ~50 lines in `pipeline.py` + 3× Puhti submit time.
 
-- [ ] **6. Butterworth coefficient sensitivity (Monte Carlo).**
+- [ ] **6. Butterworth coefficient sensitivity (Monte Carlo).** *(IN PROGRESS — jobs 34038254/34038255)*
   Perturb each SOS coefficient with Gaussian noise at σ = 1%, 2%, 5%, 100 draws per level.
-  Report accuracy distribution.
-  Effort: ~80 lines for the perturbation harness, single Puhti submit per σ level. ~3 days.
+  Report accuracy distribution. Validates Gm-C analog filter tolerance claim.
+  Implementation: `run_butterworth_mc.py` + `submit_mc.sh` + `run_puhti_mc_analyze.sh`
+  9 parallel array tasks (small partition, ~25 min each) + 1 analyze job.
+  Deliverable: `butterworth_mc.png` (violin plot) + verdict per σ level (PASS/MARGINAL/FAIL).
+  Target: p95 accuracy drop < 1pp at σ=5% (worst-case CMOS process variation).
 
 - [ ] **7. End-to-end hardware-constrained accuracy.**
   Combine worst-acceptable filter mismatch (from #6) with worst-acceptable CSP precision
