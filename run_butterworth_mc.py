@@ -89,45 +89,63 @@ def _apply_filterbank(
     out = []
     for sos in sos_list:
         filtered = sosfilt(sos, X_2d, axis=-1)
+        if not np.isfinite(filtered).all():
+            # Unstable filter (poles outside unit circle) — return zeros so the
+            # draw degrades gracefully rather than crashing downstream.
+            filtered = np.zeros_like(filtered)
         out.append(filtered.reshape(n_trials, n_channels, n_samples).astype(np.float32))
     return out
 
 
-def _perturb_sos(
-    sos_list: List[np.ndarray],
+def _perturb_filterbank(
+    bands: List[Tuple[float, float]],
+    sfreq: float,
     sigma: float,
     rng: np.random.Generator,
+    order: int = 4,
 ) -> List[np.ndarray]:
-    """Return a new list of SOS arrays with multiplicative Gaussian noise.
+    """Build SOS arrays with Gm-C manufacturing-tolerance perturbation.
 
-    Each free coefficient c is replaced by c × (1 + ε), ε ~ N(0, sigma).
-    Covers 5 entries per section (b0, b1, b2, a1, a2), modelling independent
-    process variation in every Gm-C cell.  Column 3 (a0) is always 1.0 in
-    normalised SOS form and is left untouched to satisfy scipy's constraint.
+    Physical model: in a Gm-C integrator the time constant is τ = C/Gm.
+    A σ% mismatch in Gm shifts τ, which directly shifts the cutoff frequency
+    by the same σ%.  Perturbing each band edge independently models independent
+    mismatch between the integrators that set the low-cut and high-cut poles.
+
+    This approach *always* produces a stable filter (butter() guarantees poles
+    inside the unit circle) — unlike direct SOS coefficient perturbation, which
+    can push poles outside the unit circle and cause filter blow-up.
 
     Parameters
     ----------
-    sos_list : list of np.ndarray
-        Clean SOS arrays, one per band.
+    bands : list of (lo, hi) tuples
+        Nominal band edges in Hz.
+    sfreq : float
+        Sampling frequency in Hz.
     sigma : float
-        Relative noise standard deviation (e.g. 0.01 = 1%).
+        Relative noise standard deviation (e.g. 0.01 = 1 %).
     rng : np.random.Generator
         NumPy RNG for reproducibility.
+    order : int
+        Butterworth filter order.
 
     Returns
     -------
     list of np.ndarray
-        Perturbed SOS arrays, same structure as input.
+        Perturbed SOS arrays, one per band.
     """
+    nyq = sfreq / 2.0
     perturbed = []
-    for sos in sos_list:
-        p = sos.copy()
-        # SOS layout: [b0, b1, b2, a0, a1, a2] — column 3 (a0) must stay 1.0
-        # Perturb only the 5 free coefficients: cols 0,1,2,4,5
-        noise = rng.standard_normal(sos.shape) * sigma
-        noise[:, 3] = 0.0          # leave a0 untouched
-        p = sos * (1.0 + noise)
-        perturbed.append(p)
+    for lo, hi in bands:
+        # Independent Gm mismatch on the two integrators setting lo and hi
+        lo_p = lo * (1.0 + rng.standard_normal() * sigma)
+        hi_p = hi * (1.0 + rng.standard_normal() * sigma)
+        # Clamp to valid range: [0.5 Hz, nyq-0.5 Hz] with lo < hi - 0.5
+        lo_p = float(np.clip(lo_p, 0.5, nyq - 1.0))
+        hi_p = float(np.clip(hi_p, lo_p + 0.5, nyq - 0.5))
+        lo_n = lo_p / nyq
+        hi_n = hi_p / nyq
+        sos = butter(order, [lo_n, hi_n], btype="bandpass", output="sos")
+        perturbed.append(sos)
     return perturbed
 
 
@@ -271,7 +289,7 @@ def run_subject_mc(
         model.load_state_dict(state)
         model.eval()
 
-        # Precompute clean SOS once per fold
+        # Precompute clean SOS once per fold (nominal, unperturbed)
         sos_clean = [_band_sos(lo, hi, sfreq) for lo, hi in bands]
 
         # Baseline accuracy using clean (unperturbed) filters
@@ -290,7 +308,7 @@ def run_subject_mc(
         for sigma in sigmas:
             draw_accs: List[float] = []
             for draw in range(n_draws):
-                sos_perturbed = _perturb_sos(sos_clean, sigma, rng)
+                sos_perturbed = _perturb_filterbank(bands, sfreq, sigma, rng)
                 X_bands_p = _apply_filterbank(X_test, sos_perturbed)
                 proj_p    = csp.transform(X_bands_p)
                 spikes_p  = _encode_spikes(proj_p, znorm, mibif, encoder_type,

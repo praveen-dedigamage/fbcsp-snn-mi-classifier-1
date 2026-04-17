@@ -5,7 +5,7 @@
 #SBATCH --array=1-9
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=16G
-#SBATCH --time=00:35:00
+#SBATCH --time=01:00:00
 #SBATCH --output=logs/fbcsp_mc_S%a_%j.out
 #SBATCH --error=logs/fbcsp_mc_S%a_%j.err
 
@@ -14,7 +14,7 @@
 #
 # Array job: one task per subject (task ID = subject ID).
 # No GPU needed — small partition.
-# Wall time: ~25 min per subject (5 folds × 300 draws × ~1s)
+# Wall time: ~45 min per subject (5 folds × 300 draws × ~0.5s, CPU-only)
 #
 # Usage:
 #   sbatch run_puhti_mc.sh
