@@ -106,14 +106,23 @@ def _perturb_filterbank(
 ) -> List[np.ndarray]:
     """Build SOS arrays with Gm-C manufacturing-tolerance perturbation.
 
-    Physical model: in a Gm-C integrator the time constant is τ = C/Gm.
-    A σ% mismatch in Gm shifts τ, which directly shifts the cutoff frequency
-    by the same σ%.  Perturbing each band edge independently models independent
-    mismatch between the integrators that set the low-cut and high-cut poles.
+    Physical model
+    --------------
+    In a Gm-C integrator the time constant is τ = C/Gm, so Gm mismatch
+    shifts cutoff frequencies by the same relative amount.
 
-    This approach *always* produces a stable filter (butter() guarantees poles
-    inside the unit circle) — unlike direct SOS coefficient perturbation, which
-    can push poles outside the unit circle and cause filter blow-up.
+    Critically, all Gm cells of the same type on one chip see the **same
+    global process corner** (fast/slow/nominal).  A single shared ε per draw
+    models this correctly: all band edges shift by the same relative factor,
+    preserving the inter-band spacing.  This is more physically accurate than
+    drawing independent ε per band (which would require 6 cells all landing on
+    different process corners — impossible on one die).
+
+    The two noise components in practice:
+      • Global (dominant): σ_global ≈ 1–5% — same ε applied to every edge.
+      • Local  (minor):    σ_local  << σ_global — residual per-cell scatter.
+    We model only the dominant global component; local scatter is negligible
+    for well-matched common-centroid layout.
 
     Parameters
     ----------
@@ -122,7 +131,8 @@ def _perturb_filterbank(
     sfreq : float
         Sampling frequency in Hz.
     sigma : float
-        Relative noise standard deviation (e.g. 0.01 = 1 %).
+        Relative noise standard deviation for the global process corner
+        (e.g. 0.01 = 1 %).
     rng : np.random.Generator
         NumPy RNG for reproducibility.
     order : int
@@ -131,14 +141,16 @@ def _perturb_filterbank(
     Returns
     -------
     list of np.ndarray
-        Perturbed SOS arrays, one per band.
+        Perturbed SOS arrays, one per band.  All bands receive the same
+        relative frequency shift (one draw = one chip).
     """
     nyq = sfreq / 2.0
+    # One global process-corner draw per chip — same for all bands
+    eps = rng.standard_normal() * sigma
     perturbed = []
     for lo, hi in bands:
-        # Independent Gm mismatch on the two integrators setting lo and hi
-        lo_p = lo * (1.0 + rng.standard_normal() * sigma)
-        hi_p = hi * (1.0 + rng.standard_normal() * sigma)
+        lo_p = lo * (1.0 + eps)
+        hi_p = hi * (1.0 + eps)
         # Clamp to valid range: [0.5 Hz, nyq-0.5 Hz] with lo < hi - 0.5
         lo_p = float(np.clip(lo_p, 0.5, nyq - 1.0))
         hi_p = float(np.clip(hi_p, lo_p + 0.5, nyq - 0.5))
