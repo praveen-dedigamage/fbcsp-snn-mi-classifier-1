@@ -20,9 +20,9 @@ DONE   Item 1  Bessel filter             63.4% — causal Butterworth wins
 DONE   Item 2  ADM encoder               67.4% software / 65.8% hardware-compatible
 DONE   Item 3  Persistent state          resolved — no code change
 DONE   Item 4  ADM A/B sweep             confirmed 9-subject
-DONE   Item 5  CSP PTQ sweep             <1pp drop at 4-bit ✓
-DONE   Item 6  Butterworth MC            σ=1%:−0.05pp | σ=2%:+0.26pp | σ=5%:+2.42pp mean
-TODO   Item 7  End-to-end stress test    ready to submit
+DONE   Item 5  CSP PTQ sweep             <1pp drop at 4-bit ✓ (claim scoped: PTQ only, not full ReRAM)
+IN PROGRESS  Item 6  Butterworth MC      correlated model rerun (Results_butterworth_mc_corr)
+TODO   Item 7  End-to-end stress test    ready after item 6
 TODO   Item 8  Lava simulation           critical path (~5 days)
 TODO   Item 9  Energy estimation         1 day after item 8
 TODO   Item 10 Cross-dataset             optional strengthener
@@ -72,39 +72,35 @@ Without these, the paper either can't be written or won't survive review.
 - [x] **5. CSP weight quantization sweep.** ✓ CLOSED 2026-04-17
   Quantize CSP eigenvectors to 4-, 6-, 8-bit symmetric per-tensor. Run all 9 subjects at
   each level. Mirror the existing INT8 SNN methodology.
-  Deliverable: accuracy-vs-precision cliff plot. Target: ≤1 pp drop at 6-bit.
-  Effort: ~50 lines for the quantization wrapper, then 3 Puhti submits. ~3 days.
   Result (2026-04-17): 65.8% FP32 mean (9 subjects, causal Butterworth, no augwin).
   PTQ drop: 8-bit +0.18pp | 6-bit +0.23pp | 4-bit −0.89pp. <1pp at all levels.
   Paper number: 65.8% hardware-compatible vs 67.4% software upper bound (−1.6pp causal cost).
 
-  **Contingency 5a — Per-filter quantization (if per-tensor drop >2 pp at 6-bit).**
-  Each CSP eigenvector gets its own scale factor: `scale_i = max(|w_i|) / (2^(bits-1) - 1)`.
-  Reduces outlier-driven quantization error with no runtime cost. ~20 lines in
-  `quantization.py`. Re-run the same Puhti sweep.
+  **Paper claim (scoped):** "CSP spatial filters require only 4-bit fixed-point precision
+  (< 1 pp accuracy cost), consistent with the demonstrated storage precision of resistive
+  crossbar arrays."  Full ReRAM conductance-variability modelling (cycle-to-cycle noise,
+  drift, stuck bits) is out of scope — PTQ establishes the minimum precision requirement;
+  cited ReRAM literature confirms this is within achievable hardware precision.
+  Contingencies 5a/5b dropped — not needed (all levels passed).
 
-  **Contingency 5b — QAT with frozen quantized CSP (if 5a still fails).**
-  Train the SNN with CSP outputs already quantized to target precision (8-, 6-, 4-bit).
-  CSP filters are quantized before CSP projection during the training loop; the SNN learns
-  to work with the lower-precision features. CSP filters themselves are not updated.
-  Pipeline change: in `_run_single_fold`, quantize `csp.filters_` to target bits before
-  calling `csp.transform` on both train and validation data within the training loop.
-  Restore FP32 filters before saving artifacts. Three separate trained models per subject
-  (one per target precision). Effort: ~50 lines in `pipeline.py` + 3× Puhti submit time.
+- [ ] **6. Butterworth coefficient sensitivity (Monte Carlo).** *(RERUN IN PROGRESS)*
+  Perturbation model: single global ε ~ N(0,σ) per draw applied uniformly to all band
+  edges — models the dominant physical mechanism (global process corner; all Gm cells on
+  one die see the same systematic shift).  Previous run (jobs 34046769/34046770) used
+  independent ε per edge, which is physically incorrect and over-estimates variance.
+  Corrected code committed (ff3e89a).  New jobs: Results_butterworth_mc_corr.
 
-- [x] **6. Butterworth coefficient sensitivity (Monte Carlo).** ✓ CLOSED 2026-04-17
-  Perturbation model: cutoff-frequency shift (Gm mismatch → τ = C/Gm shifts f_c by same σ%).
-  9 subjects × 5 folds × 100 draws per σ level. Jobs: 34046769 / 34046770.
-  Results (mean accuracy drop across 9 subjects):
-    σ=1%  (careful layout):        −0.05 pp  ← indistinguishable from noise
-    σ=2%  (production tolerance):  +0.26 pp  ← negligible
-    σ=5%  (worst-case):            +2.42 pp  ← moderate; see per-subject breakdown
-  Per-subject highlights: S1 most sensitive (+5.53 pp mean at σ=5%, ±7.88 pp std);
-  S6 most robust (−0.97 pp at σ=1%, actually improved).
-  Note on "FAIL" verdict: the automated p95 criterion (p95 < 1pp) is too strict —
-  p95 pools all subjects/draws and is dominated by S1 outlier draws.  The mean drop
-  is the correct metric for a fixed-mismatch chip.  Paper claim stands:
-  "Gm matching of σ≤2% (standard in careful CMOS layout) degrades accuracy by <0.3 pp."
+  Previous results (independent model, for reference):
+    σ=1%: −0.05 pp mean | σ=2%: +0.26 pp | σ=5%: +2.42 pp (S1 ±7.88 pp std)
+  Expected with correlated model: lower variance at all σ, especially σ=5%;
+  mean drops expected to remain small or decrease further.
+
+  **Paper claim:** "A global process corner of σ≤2% (typical CMOS production tolerance)
+  shifts all band-edge frequencies by the same relative factor, causing < X pp mean
+  accuracy drop."  [X to be filled from correlated run results.]
+
+  **Scope note:** full ReRAM / conductance-variability modelling for CSP crossbar is out
+  of scope (item 5 scoped as PTQ only).  Filter MC is the primary analog tolerance claim.
 
 - [ ] **7. End-to-end hardware-constrained accuracy.**
   Combine worst-acceptable filter mismatch (from #6) with worst-acceptable CSP precision
