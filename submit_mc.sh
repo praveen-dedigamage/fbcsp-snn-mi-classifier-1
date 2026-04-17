@@ -22,7 +22,7 @@ mkdir -p logs
 RESULTS_DIR="${1:-Results_adm_static6_ptq}"
 OUTPUT_DIR="${2:-Results_butterworth_mc}"
 SUBJECTS="${SUBJECTS:-1 2 3 4 5 6 7 8 9}"
-N_DRAWS="${N_DRAWS:-100}"
+N_DRAWS="${N_DRAWS:-50}"
 SIGMAS="${SIGMAS:-0.01 0.02 0.05}"
 
 echo "RESULTS_DIR: ${RESULTS_DIR}"
