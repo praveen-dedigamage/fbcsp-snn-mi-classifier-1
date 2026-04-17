@@ -45,21 +45,37 @@ from pathlib import Path
 output_dir = Path(os.environ.get("OUTPUT_DIR", "Results_butterworth_mc"))
 subjects   = [int(s) for s in os.environ.get("SUBJECTS", "1 2 3 4 5 6 7 8 9").split()]
 
-# Read all per-subject raw CSVs written by run_butterworth_mc.py
+# Read all per-subject raw CSVs written by run_butterworth_mc.py.
+# Each array task writes only mc_raw_S{N}.csv for its own subject.
+# Do NOT fall back to the merged mc_raw.csv — that file may be from a
+# previous run with different settings (different n_draws / n_folds)
+# and silently mixing old + new data would corrupt the results.
 all_rows = []
 fieldnames = None
+missing = []
 for s in subjects:
     p = output_dir / f"mc_raw_S{s}.csv"
     if not p.exists():
-        # Fall back to merged file if subject ran alone
-        p = output_dir / "mc_raw.csv"
-    if not p.exists():
-        print(f"  WARNING: no MC raw CSV for S{s}", file=sys.stderr)
+        print(f"  ERROR: mc_raw_S{s}.csv not found — job may have failed or timed out",
+              file=sys.stderr)
+        missing.append(s)
         continue
     with open(p, newline="") as f:
         reader = csv.DictReader(f)
         fieldnames = reader.fieldnames
-        all_rows.extend(r for r in reader if int(r["subject"]) == s)
+        rows = [r for r in reader if int(r["subject"]) == s]
+        if not rows:
+            print(f"  ERROR: mc_raw_S{s}.csv exists but contains no rows for S{s}",
+                  file=sys.stderr)
+            missing.append(s)
+            continue
+        all_rows.extend(rows)
+        print(f"  S{s}: {len(rows)} rows loaded")
+
+if missing:
+    print(f"  WARNING: {len(missing)} subject(s) missing: {missing}", file=sys.stderr)
+    print(f"  Proceeding with {len(subjects) - len(missing)}/{len(subjects)} subjects.",
+          file=sys.stderr)
 
 if not all_rows:
     print("No MC data found.", file=sys.stderr)
