@@ -100,9 +100,10 @@ def _perturb_sos(
 ) -> List[np.ndarray]:
     """Return a new list of SOS arrays with multiplicative Gaussian noise.
 
-    Each coefficient c is replaced by c × (1 + ε), ε ~ N(0, sigma).
-    Covers all 6 entries per section (b0, b1, b2, a0, a1, a2), modelling
-    independent process variation in every Gm-C cell.
+    Each free coefficient c is replaced by c × (1 + ε), ε ~ N(0, sigma).
+    Covers 5 entries per section (b0, b1, b2, a1, a2), modelling independent
+    process variation in every Gm-C cell.  Column 3 (a0) is always 1.0 in
+    normalised SOS form and is left untouched to satisfy scipy's constraint.
 
     Parameters
     ----------
@@ -118,10 +119,16 @@ def _perturb_sos(
     list of np.ndarray
         Perturbed SOS arrays, same structure as input.
     """
-    return [
-        sos * (1.0 + rng.standard_normal(sos.shape) * sigma)
-        for sos in sos_list
-    ]
+    perturbed = []
+    for sos in sos_list:
+        p = sos.copy()
+        # SOS layout: [b0, b1, b2, a0, a1, a2] — column 3 (a0) must stay 1.0
+        # Perturb only the 5 free coefficients: cols 0,1,2,4,5
+        noise = rng.standard_normal(sos.shape) * sigma
+        noise[:, 3] = 0.0          # leave a0 untouched
+        p = sos * (1.0 + noise)
+        perturbed.append(p)
+    return perturbed
 
 
 def _encode_spikes(
