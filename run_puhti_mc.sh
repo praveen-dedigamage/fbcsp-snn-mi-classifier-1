@@ -6,6 +6,9 @@
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=16G
 #SBATCH --time=01:00:00
+# Wall-time budget: 1 fold × 3 sigmas × 50 draws × ~11 s/draw ≈ 27 min
+#                  + data load/model load overhead               ≈  3 min
+#                  = ~30 min expected; 60 min gives 2× safety buffer
 #SBATCH --output=logs/fbcsp_mc_S%a_%j.out
 #SBATCH --error=logs/fbcsp_mc_S%a_%j.err
 
@@ -14,7 +17,7 @@
 #
 # Array job: one task per subject (task ID = subject ID).
 # No GPU needed — small partition.
-# Wall time: ~45 min per subject (5 folds × 300 draws × ~0.5s, CPU-only)
+# Wall time: ~30 min per subject (1 fold × 3 sigmas × 50 draws × ~11s/draw)
 #
 # Usage:
 #   sbatch run_puhti_mc.sh
@@ -34,7 +37,7 @@ set -euo pipefail
 SUBJECT_ID=${SLURM_ARRAY_TASK_ID}
 
 RESULTS_DIR="${RESULTS_DIR:-Results_adm_static6_ptq}"
-N_DRAWS="${N_DRAWS:-100}"
+N_DRAWS="${N_DRAWS:-50}"
 SIGMAS="${SIGMAS:-0.01 0.02 0.05}"
 OUTPUT_DIR="${OUTPUT_DIR:-Results_butterworth_mc}"
 
@@ -64,7 +67,7 @@ mkdir -p logs
 python run_butterworth_mc.py \
     --results-dir "${RESULTS_DIR}" \
     --subjects "${SUBJECT_ID}" \
-    --n-folds 5 \
+    --n-folds 1 \
     --sigmas ${SIGMAS} \
     --n-draws "${N_DRAWS}" \
     --output-dir "${OUTPUT_DIR}" \
