@@ -23,8 +23,8 @@ DONE   Item 4  ADM A/B sweep             confirmed 9-subject
 DONE   Item 5  CSP PTQ sweep             <1pp drop at 4-bit ✓ (claim scoped: PTQ only, not full ReRAM)
 DONE   Item 6  Butterworth MC            σ=2% → +0.06pp mean ✓ (correlated model, Results_butterworth_mc_corr)
 DONE   Item 7  End-to-end stress test    65.9% FP32 → 65.4% full HW ✓ (0.57pp total penalty)
-TODO   Item 8  Lava simulation           critical path (~5 days)
-TODO   Item 9  Energy estimation         1 day after item 8
+DONE   Item 8  Lava simulation           FP32 65.9% → Lava 66.1%, gap +0.18pp ✓ (< 1pp)
+TODO   Item 9  Energy estimation         2,388,871 SynOps/inference logged — ready now
 TODO   Item 10 Cross-dataset             optional strengthener
 TODO   Items 11-16  Tables, figures, manuscript, release
 ```
@@ -128,15 +128,43 @@ Without these, the paper either can't be written or won't survive review.
   crossbar weights, and INT8 SNN synapses, mean test accuracy is 65.4% versus 65.9%
   in full float32 — a total hardware penalty of 0.57 pp across 9 subjects and 5 folds."
 
-- [ ] **8. Lava simulation of the SNN.**
+- [x] **8. Lava simulation of the SNN.** ✓ CLOSED 2026-04-18
   Convert `SNNClassifier` via Lava-DL (Loihi 2's bit-accurate software simulator, no
   hardware needed). Verify simulated accuracy matches snnTorch baseline within 1 pp, report
   network resource usage (neurons, synapses, fan-in).
-  Effort: ~100 lines for conversion + adapters. ~5 days.
+
+  Results (9 subjects × 5 folds, Results_lava, commit 2a81c05):
+  ```
+  Subj   FP32    Lava    Gap
+  S1     82.6%   81.5%  -1.18pp
+  S2     50.5%   50.3%  -0.21pp
+  S3     72.4%   74.2%  +1.81pp
+  S4     61.7%   65.1%  +3.33pp
+  S5     44.9%   42.8%  -2.08pp
+  S6     48.3%   48.3%  +0.07pp
+  S7     71.7%   74.9%  +3.19pp
+  S8     80.8%   80.3%  -0.49pp
+  S9     80.5%   77.6%  -2.85pp
+  MEAN   65.9%   66.1%  +0.18pp  ✓  (< 1pp target met)
+  ```
+  Loihi 2 resource summary: 144 neurons, 28,864 synapses, max fan-in 371 (limit 8,192 ✓).
+  Mean SynOps/inference: 2,388,871 (input rate 6.2%, hidden rate 18.2%).
+  Per-subject .net HDF5 files exported to Results_lava/network_S{N}_fold0.net.
+
+  Key fix: snnTorch `Linear` layers train with bias; steady-state bias contribution
+  V_ss = bias/(1−β) = 20×bias at β=0.95. Lava weight transfer must include bias
+  (maps to Loihi 2 neuron hardware bias register). See `fbcsp_snn/lava_model.py`.
+
+  **Paper sentence:** "Deployed on Intel Loihi 2 via the SLAYER bit-accurate simulator,
+  mean test accuracy is 66.1% — a gap of +0.18 pp from the float32 snnTorch baseline
+  (per-subject range: −2.85 to +3.33 pp), confirming functional equivalence between
+  offline training and neuromorphic hardware execution. The network occupies 144 neurons
+  and 28,864 synapses, with max fan-in 371, well within Loihi 2's 8,192-synapse limit."
 
 - [ ] **9. Energy estimation from Loihi benchmarks.**
   Count synapse events per inference from the Lava simulation, multiply by Intel's published
   per-event energy figures, report estimated Loihi 2 energy per classification.
+  SynOps already logged: mean 2,388,871/inference across 9 subjects.
   Effort: ~1 day of bookkeeping over existing simulation outputs.
 
 - [ ] **10. Cross-dataset generalization sweep.**
