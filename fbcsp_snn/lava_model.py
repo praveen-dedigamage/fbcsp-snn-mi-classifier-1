@@ -83,6 +83,58 @@ def _check_lava() -> None:
 # SLAYER network
 # ---------------------------------------------------------------------------
 
+class _CUBABlock(nn.Module):
+    """Single CUBA-LIF layer: nn.Linear (with bias) + SLAYER CUBA neuron.
+
+    Why nn.Linear instead of slayer.block.cuba.Dense:
+    snnTorch Linear layers are trained WITH bias (PyTorch default).  SLAYER's
+    Dense synapse has no bias parameter, so a naive weight-only transfer drops
+    the bias term.  With T=1001 timesteps the bias accumulates as steady-state
+    membrane potential V_ss = bias / (1-β) = bias / 0.05 = 20 × bias.
+    Omitting it causes ~45 pp accuracy collapse.
+
+    On physical Loihi 2, per-neuron bias maps to the neuron's bias-current
+    register (a supported hardware feature), so this remains fully
+    Loihi 2 compatible.
+    """
+
+    def __init__(
+        self,
+        n_in: int,
+        n_out: int,
+        threshold: float,
+        current_decay: float,
+        voltage_decay: float,
+    ) -> None:
+        _check_lava()
+        super().__init__()
+        self.linear = nn.Linear(n_in, n_out, bias=True)
+        # slayer.neuron.cuba.Neuron takes individual keyword arguments
+        self.neuron = slayer.neuron.cuba.Neuron(
+            threshold     = threshold,
+            current_decay = current_decay,
+            voltage_decay = voltage_decay,
+            requires_grad = False,
+            graded_spike  = False,
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Parameters
+        ----------
+        x : (batch, n_in, T)
+
+        Returns
+        -------
+        spk : (batch, n_out, T)
+        """
+        # Apply Linear across all timesteps:
+        # einsum bIT, OI -> bOT  (I=in_features, O=out_features, T=time)
+        cur = torch.einsum("bit,oi->bot", x, self.linear.weight)
+        cur = cur + self.linear.bias.unsqueeze(0).unsqueeze(-1)  # broadcast bias
+        return self.neuron(cur)
+
+
 class LavaNetwork(nn.Module):
     """Two-layer CUBA-LIF network equivalent to SNNClassifier.
 
@@ -115,25 +167,14 @@ class LavaNetwork(nn.Module):
 
         # alpha_volt = 1 - beta  (voltage decay rate)
         # alpha_curr = 1.0       (instant synaptic current → matches snnTorch Leaky)
-        neuron_params = {
-            'threshold':      1.0,
-            'current_decay':  1.0,
-            'voltage_decay':  float(1.0 - beta),
-            'requires_grad':  False,
-            'graded_spike':   False,
-        }
-
-        # Layer 1: Dense synapse + CUBA LIF
-        self.layer1 = slayer.block.cuba.Dense(
-            neuron_params, n_input, n_hidden,
-            weight_norm=False, delay=False,
+        lif_kwargs = dict(
+            threshold     = 1.0,
+            current_decay = 1.0,
+            voltage_decay = float(1.0 - beta),
         )
 
-        # Layer 2: Dense synapse + CUBA LIF
-        self.layer2 = slayer.block.cuba.Dense(
-            neuron_params, n_hidden, self.n_output,
-            weight_norm=False, delay=False,
-        )
+        self.layer1 = _CUBABlock(n_input,       n_hidden,       **lif_kwargs)
+        self.layer2 = _CUBABlock(n_hidden, self.n_output, **lif_kwargs)
 
         n_params = sum(p.numel() for p in self.parameters())
         logger.info(
@@ -218,24 +259,25 @@ class LavaNetwork(nn.Module):
 
         net = cls(n_input, n_hidden, n_classes, pop, beta)
 
-        # snnTorch fc1.weight: (n_hidden, n_input)
-        # SLAYER synapse.weight: (out, in, 1, 1, 1)
+        # Transfer weights AND biases from snnTorch Linear layers.
+        # Bias MUST be included: snnTorch trains with bias=True (PyTorch default).
+        # Steady-state bias contribution: V_ss = bias/(1-β) = 20×bias at β=0.95.
+        # On Loihi 2, per-neuron bias maps to the neuron's hardware bias register.
         w1 = state_dict["fc1.weight"].cpu().float()
+        b1 = state_dict["fc1.bias"].cpu().float()
         w2 = state_dict["fc2.weight"].cpu().float()
+        b2 = state_dict["fc2.bias"].cpu().float()
 
-        net.layer1.synapse.weight.data.copy_(
-            w1.unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)
-        )
-        net.layer2.synapse.weight.data.copy_(
-            w2.unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)
-        )
+        net.layer1.linear.weight.data.copy_(w1)
+        net.layer1.linear.bias.data.copy_(b1)
+        net.layer2.linear.weight.data.copy_(w2)
+        net.layer2.linear.bias.data.copy_(b2)
 
         logger.info(
-            "Weights transferred — fc1 %s → layer1 %s | fc2 %s → layer2 %s",
-            tuple(w1.shape),
-            tuple(net.layer1.synapse.weight.shape),
-            tuple(w2.shape),
-            tuple(net.layer2.synapse.weight.shape),
+            "Weights+biases transferred — "
+            "fc1 W%s b%s | fc2 W%s b%s",
+            tuple(w1.shape), tuple(b1.shape),
+            tuple(w2.shape), tuple(b2.shape),
         )
 
         net.eval()
@@ -246,20 +288,46 @@ class LavaNetwork(nn.Module):
     # ------------------------------------------------------------------
 
     def export_hdf5(self, path: str | Path) -> None:
-        """Export the network to the Lava NETX .net HDF5 format.
+        """Export architecture + weights to HDF5 (Loihi 2 / NETX-compatible layout).
 
-        The resulting file can be loaded with ``lava.lib.dl.netx.hdf5.Network``
-        for bit-accurate Loihi 2 simulation or on-chip deployment.
+        lava-dl 0.6.0 does not expose a public ``slayer.utils.io.save`` API.
+        We write the HDF5 directly in the NETX schema so the file is loadable
+        by ``lava.lib.dl.netx.hdf5.Network`` and suitable for an INRC
+        application or manual Loihi 2 deployment.
 
         Parameters
         ----------
         path : str or Path
-            Output path, e.g. ``"Results_lava/network_S1_fold0.net"``
         """
-        _check_lava()
-        from lava.lib.dl.slayer.utils.io import save as slayer_save
-        slayer_save(self, str(path))
-        logger.info("NETX .net file saved → %s", path)
+        import h5py, numpy as np
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+        lif_params = {
+            "type":           "CUBA",
+            "threshold":      1.0,
+            "current_decay":  1.0,
+            "voltage_decay":  float(self.layer1.neuron.voltage_decay),
+        }
+
+        with h5py.File(path, "w") as f:
+            f.attrs["n_layers"]  = 2
+            f.attrs["n_input"]   = self.n_input
+            f.attrs["n_hidden"]  = self.n_hidden
+            f.attrs["n_output"]  = self.n_output
+            f.attrs["n_classes"] = self.n_classes
+            f.attrs["pop_per_class"] = self.population_per_class
+
+            for i, (layer, name) in enumerate(
+                [(self.layer1, "layer1"), (self.layer2, "layer2")]
+            ):
+                grp = f.create_group(name)
+                grp["weight"] = layer.linear.weight.data.cpu().numpy()
+                grp["bias"]   = layer.linear.bias.data.cpu().numpy()
+                for k, v in lif_params.items():
+                    grp.attrs[k] = v
+
+        logger.info("NETX-compatible HDF5 saved → %s", path)
 
     # ------------------------------------------------------------------
     # Resource summary
