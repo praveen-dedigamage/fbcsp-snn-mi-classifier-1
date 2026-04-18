@@ -493,6 +493,37 @@ are constant across trials on a given die). The paper claim: *A global process c
 > can create artificial frequency gaps between adjacent bands, artificially inflating variance.
 > The correlated model represents the dominant failure mode for a monolithic Gm-C filter bank.
 
+### End-to-end hardware stress test (item 7)
+
+All three hardware imperfections applied simultaneously: σ=2% Gm-C filter mismatch
+(correlated, 100 MC draws) + 4-bit CSP crossbar weights + INT8 SNN synapses.
+Training untouched (FP32); imperfections applied at inference only.
+
+| Subject | FP32 | Quant-only¹ | Full HW² | Δ-Total |
+|---|---|---|---|---|
+| S1 | 82.6% | 82.9% | 82.1% | −0.57 pp |
+| S2 | 50.5% | 51.1% | 50.8% | +0.28 pp |
+| S3 | 72.4% | 72.6% | 72.9% | +0.58 pp |
+| S4 | 61.7% | 61.1% | 61.0% | −0.78 pp |
+| S5 | 44.9% | 44.7% | 44.6% | −0.34 pp |
+| S6 | 48.3% | 48.7% | 48.2% | −0.11 pp |
+| S7 | 71.7% | 69.9% | 69.4% | −2.36 pp |
+| S8 | 80.8% | 79.6% | 79.4% | −1.44 pp |
+| S9 | 80.5% | 80.1% | 80.1% | −0.38 pp |
+| **Mean** | **65.9%** | **65.6%** | **65.4%** | **−0.57 pp** |
+
+¹ INT8 SNN + 4-bit CSP, nominal filters  
+² INT8 SNN + 4-bit CSP + σ=2% filter perturbation (mean over 100 draws)
+
+**Decomposed hardware penalty:**
+- Quantization (INT8 SNN + 4-bit CSP): −0.32 pp
+- Filter mismatch (σ=2%): −0.25 pp
+- **Combined: −0.57 pp** (65.9% → 65.4%)
+
+> **Paper sentence:** Under simultaneous Gm-C filter mismatch (σ = 2%), 4-bit CSP
+> crossbar weights, and INT8 SNN synapses, mean test accuracy is **65.4%** versus
+> 65.9% in full float32 — a total hardware penalty of **0.57 pp** across 9 subjects.
+
 ### V4.2-augwin — classifier comparison
 
 | Classifier | Mean | vs static baseline |

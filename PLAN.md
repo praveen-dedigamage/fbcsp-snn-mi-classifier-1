@@ -22,7 +22,7 @@ DONE   Item 3  Persistent state          resolved — no code change
 DONE   Item 4  ADM A/B sweep             confirmed 9-subject
 DONE   Item 5  CSP PTQ sweep             <1pp drop at 4-bit ✓ (claim scoped: PTQ only, not full ReRAM)
 DONE   Item 6  Butterworth MC            σ=2% → +0.06pp mean ✓ (correlated model, Results_butterworth_mc_corr)
-TODO   Item 7  End-to-end stress test    ready now
+DONE   Item 7  End-to-end stress test    65.9% FP32 → 65.4% full HW ✓ (0.57pp total penalty)
 TODO   Item 8  Lava simulation           critical path (~5 days)
 TODO   Item 9  Energy estimation         1 day after item 8
 TODO   Item 10 Cross-dataset             optional strengthener
@@ -110,12 +110,23 @@ Without these, the paper either can't be written or won't survive review.
   **Scope note:** full ReRAM / conductance-variability modelling for CSP crossbar is out
   of scope (item 5 scoped as PTQ only).  Filter MC is the primary analog tolerance claim.
 
-- [ ] **7. End-to-end hardware-constrained accuracy.**
-  Combine worst-acceptable filter mismatch (from #6) with worst-acceptable CSP precision
-  (from #5) and the existing INT8 SNN. Run full pipeline.
-  Deliverable: one sentence with one number — "under realistic silicon constraints, accuracy
-  is X% vs Y% in float32."
-  Effort: 1 Puhti submit, no new code beyond what items 5–6 produced. ~1 day.
+- [x] **7. End-to-end hardware-constrained accuracy.** ✓ CLOSED 2026-04-18
+  Combined σ=2% correlated filter mismatch + 4-bit CSP + INT8 SNN on all 9 subjects,
+  5 folds, 100 MC draws per fold.  Results (Results_e2e_stress):
+
+  ```
+  Config                   Mean acc   Δ from FP32
+  FP32 baseline            65.9%      —
+  INT8 SNN + 4-bit CSP     65.6%      −0.32 pp   (quantization only)
+  + σ=2% filter            65.4%      −0.57 pp   (full hardware stack)
+  ```
+
+  Per-subject breakdown: S7 most sensitive (−2.36 pp total); S3 marginally benefits
+  (+0.58 pp — quantization noise acts as regulariser).  All others within ±1.5 pp.
+
+  **Paper sentence:** "Under simultaneous Gm-C filter mismatch (σ = 2%), 4-bit CSP
+  crossbar weights, and INT8 SNN synapses, mean test accuracy is 65.4% versus 65.9%
+  in full float32 — a total hardware penalty of 0.57 pp across 9 subjects and 5 folds."
 
 - [ ] **8. Lava simulation of the SNN.**
   Convert `SNNClassifier` via Lava-DL (Loihi 2's bit-accurate software simulator, no
