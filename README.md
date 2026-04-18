@@ -460,31 +460,69 @@ projection can use 4-bit weight storage with negligible accuracy cost.
 
 ### Gm-C filter bank — manufacturing tolerance (Butterworth Monte Carlo)
 
-Cutoff-frequency perturbation model: Gm mismatch shifts integrator time constants
-τ = C/Gm → shifts band edges by the same σ%.
-9 subjects × 5 folds × 100 draws per σ level.
+Perturbation model: one global ε ~ N(0,σ) per draw, applied uniformly to all band edges.
+This models the dominant physical mechanism — global process corner where all Gm cells on
+one die shift by the same systematic fraction.
+9 subjects × 5 folds × 100 draws per σ level (Results_butterworth_mc_corr).
 
 | Subject | σ = 1% | σ = 2% | σ = 5% | Baseline |
 |---|---|---|---|---|
-| S1 | −0.10 ± 1.38 pp | +0.61 ± 2.73 pp | +5.53 ± 7.88 pp | 82.6% |
-| S2 | −0.10 ± 1.28 pp | +0.05 ± 1.42 pp | +1.51 ± 3.22 pp | 50.6% |
-| S3 | −0.06 ± 1.05 pp | +0.14 ± 1.57 pp | +1.61 ± 3.76 pp | 72.4% |
-| S4 | +0.00 ± 1.42 pp | +0.00 ± 2.10 pp | +1.65 ± 4.80 pp | 61.7% |
-| S5 | +0.91 ± 1.23 pp | +1.28 ± 1.85 pp | +2.71 ± 3.94 pp | 44.9% |
-| S6 | −0.97 ± 1.29 pp | −0.80 ± 1.74 pp | +1.39 ± 3.98 pp | 48.3% |
-| S7 | −0.06 ± 1.07 pp | +0.24 ± 1.98 pp | +1.41 ± 4.62 pp | 71.7% |
-| S8 | −0.08 ± 0.68 pp | +0.49 ± 1.36 pp | +3.52 ± 5.84 pp | 80.8% |
-| S9 | +0.03 ± 0.95 pp | +0.35 ± 1.46 pp | +2.44 ± 4.29 pp | 80.5% |
-| **Mean** | **−0.05 pp** | **+0.26 pp** | **+2.42 pp** | **65.9%** |
+| S1 | −0.33 ± 0.78 pp | −0.02 ± 1.40 pp | +1.55 ± 3.23 pp | 82.6% |
+| S2 | −0.36 ± 1.22 pp | −0.29 ± 1.38 pp | +0.09 ± 1.67 pp | 50.6% |
+| S3 | −0.09 ± 1.01 pp | −0.15 ± 1.65 pp | +0.10 ± 3.20 pp | 72.4% |
+| S4 | −0.23 ± 1.23 pp | +0.10 ± 1.80 pp | +0.95 ± 3.46 pp | 61.7% |
+| S5 | +0.77 ± 1.07 pp | +0.87 ± 1.50 pp | +1.03 ± 2.59 pp | 44.9% |
+| S6 | −0.75 ± 1.25 pp | −0.54 ± 1.92 pp | +1.14 ± 4.10 pp | 48.3% |
+| S7 | +0.08 ± 1.18 pp | +0.09 ± 2.29 pp | +1.48 ± 5.45 pp | 71.7% |
+| S8 | −0.06 ± 0.68 pp | +0.32 ± 1.25 pp | +2.97 ± 5.13 pp | 80.8% |
+| S9 | −0.06 ± 0.69 pp | +0.15 ± 1.03 pp | +1.36 ± 3.36 pp | 80.5% |
+| **Mean** | **−0.11 pp** | **+0.06 pp** | **+1.19 pp** | **65.9%** |
 
 **Interpretation:**
-- σ = 1% (careful layout in 130 nm CMOS): mean drop **−0.05 pp** — indistinguishable from sampling noise.
-- σ = 2% (typical production tolerance): mean drop **+0.26 pp** — negligible.
-- σ = 5% (pessimistic worst-case): mean drop **+2.42 pp** — moderate; S1 most sensitive due to narrow-band ERD/ERS.
+- σ = 1% (careful layout in 130 nm CMOS): mean drop **−0.11 pp** — indistinguishable from noise.
+- σ = 2% (typical CMOS production tolerance): mean drop **+0.06 pp** — negligible (< 0.1 pp).
+- σ = 5% (pessimistic worst-case): mean drop **+1.19 pp** — S8 most sensitive at this extreme.
 
-The mean drop is the correct metric for a fixed-mismatch chip (Gm values are constant
-across trials on a given die). The paper claim holds: *Gm matching of σ ≤ 2% degrades
-mean accuracy by < 0.3 pp.*
+The mean is the correct metric: a manufactured chip has one fixed process corner (Gm values
+are constant across trials on a given die). The paper claim: *A global process corner of
+σ ≤ 2% causes < 0.1 pp mean accuracy change — negligible relative to inter-subject variance
+(±15 pp).*
+
+> **Physical model note:** The correlated model (one shared ε per draw) is more physically
+> accurate than independent per-edge perturbation (one ε per band edge). An independent model
+> can create artificial frequency gaps between adjacent bands, artificially inflating variance.
+> The correlated model represents the dominant failure mode for a monolithic Gm-C filter bank.
+
+### End-to-end hardware stress test (item 7)
+
+All three hardware imperfections applied simultaneously: σ=2% Gm-C filter mismatch
+(correlated, 100 MC draws) + 4-bit CSP crossbar weights + INT8 SNN synapses.
+Training untouched (FP32); imperfections applied at inference only.
+
+| Subject | FP32 | Quant-only¹ | Full HW² | Δ-Total |
+|---|---|---|---|---|
+| S1 | 82.6% | 82.9% | 82.1% | −0.57 pp |
+| S2 | 50.5% | 51.1% | 50.8% | +0.28 pp |
+| S3 | 72.4% | 72.6% | 72.9% | +0.58 pp |
+| S4 | 61.7% | 61.1% | 61.0% | −0.78 pp |
+| S5 | 44.9% | 44.7% | 44.6% | −0.34 pp |
+| S6 | 48.3% | 48.7% | 48.2% | −0.11 pp |
+| S7 | 71.7% | 69.9% | 69.4% | −2.36 pp |
+| S8 | 80.8% | 79.6% | 79.4% | −1.44 pp |
+| S9 | 80.5% | 80.1% | 80.1% | −0.38 pp |
+| **Mean** | **65.9%** | **65.6%** | **65.4%** | **−0.57 pp** |
+
+¹ INT8 SNN + 4-bit CSP, nominal filters  
+² INT8 SNN + 4-bit CSP + σ=2% filter perturbation (mean over 100 draws)
+
+**Decomposed hardware penalty:**
+- Quantization (INT8 SNN + 4-bit CSP): −0.32 pp
+- Filter mismatch (σ=2%): −0.25 pp
+- **Combined: −0.57 pp** (65.9% → 65.4%)
+
+> **Paper sentence:** Under simultaneous Gm-C filter mismatch (σ = 2%), 4-bit CSP
+> crossbar weights, and INT8 SNN synapses, mean test accuracy is **65.4%** versus
+> 65.9% in full float32 — a total hardware penalty of **0.57 pp** across 9 subjects.
 
 ### V4.2-augwin — classifier comparison
 
