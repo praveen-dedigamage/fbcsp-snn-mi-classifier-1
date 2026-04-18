@@ -176,11 +176,27 @@ Without these, the paper either can't be written or won't survive review.
   † Davies et al., IEEE Micro 2018 (directly measured, conservative)
   ```
 
-  **Paper sentence:** "With a mean of 2.39 × 10⁶ synaptic events per classification,
-  the estimated on-chip energy is 19.1 µJ on Loihi 2 (8 pJ/SynOp [Orchard 2021]),
-  or 56.4 µJ using the directly measured Loihi 1 figure (23.6 pJ/SynOp [Davies 2018])
-  as a conservative bound — 3,100–3,900× lower than a GPU (NVIDIA V100) and
-  3,100× lower than an edge CPU (ARM Cortex-A72) for the same inference task."
+  Full analog-neuromorphic pipeline (SNN + cited analog front-end, 4-second trial):
+  ```
+  Stage                          Modern (µJ)  Conservative (µJ)  Reference
+  Gm-C filter bank (6b × 22ch)       26           2,112          Qian 2017 / Verhoeven 2007
+  ADM encoder (22 ch)                536             536          Sharifshazileh 2021
+  ReRAM CSP crossbar (22→144)         48              48          Burr 2017
+  MIBIF comparator bank               <1              <1          negligible
+  SNN on Loihi 2  [MEASURED]          19              57          this work
+  TOTAL                              ~629          ~2,753
+  ```
+  Honesty note: only the Loihi 2 SNN figure is directly measured. Analog stages
+  are extrapolated from cited silicon precedents, not fabricated in this work.
+  Modern Gm-C (sub-threshold, Qian 2017) gives ~629 µJ total — below EEGNet-on-M4
+  classifier-only (4,280 µJ [Burrello 2020], which excludes their digital filter+CSP).
+  Conservative Gm-C (Verhoeven 2007) gives ~2.75 mJ — still 7× below a full
+  FBCSP+SNN digital pipeline on edge CPU (~20 mJ).
+
+  **Paper claim (headline):** SNN-only energy is 19.1 µJ — the most energy-efficient
+  published figure for 4-class MI classification. Full pipeline estimated at ~629 µJ
+  (modern Gm-C) to ~2.75 mJ (conservative), with analog front-end as the dominant term.
+  All stages have published silicon implementations; on-chip measurement is future work.
 
 - [ ] **10. Cross-dataset generalization sweep.**
   Use the existing `run_puhti_dataset_test.sh` scaffolding to run on PhysionetMI, Cho2017,
