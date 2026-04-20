@@ -48,7 +48,7 @@ cd "${PROJECT_DIR}"
 
 python main.py aggregate \
     --source moabb \
-    --moabb-dataset BNCI2014_001 \
+    --moabb-dataset "${MOABB_DATASET:-BNCI2014_001}" \
     --subject-id "${SUBJECT_ID}" \
     --n-folds "${N_FOLDS}" \
     --results-dir "${RESULTS_DIR}"
