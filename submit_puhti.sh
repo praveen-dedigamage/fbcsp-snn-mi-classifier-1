@@ -46,6 +46,9 @@ ARRAY_SCRIPT="${ARRAY_SCRIPT:-run_puhti_array.sh}"
 # Subject list — override with: SUBJECTS="1 2 3" bash submit_puhti.sh ...
 SUBJECTS="${SUBJECTS:-1 2 3 4 5 6 7 8 9}"
 
+# Optional wall-time override — e.g. SBATCH_TIME=4:00:00 for 512 Hz datasets
+SBATCH_TIME="${SBATCH_TIME:-}"
+
 echo "RESULTS_DIR:  ${RESULTS_DIR}"
 echo "ARRAY_SCRIPT: ${ARRAY_SCRIPT}"
 echo "SUBJECTS:     ${SUBJECTS}"
@@ -63,7 +66,7 @@ echo "N_FOLDS=${N_FOLDS} (read from ${ARRAY_SCRIPT})"
 # Remove fold directories with index >= N_FOLDS (stale from a previous higher-fold run)
 echo "Cleaning up stale fold directories (fold_${N_FOLDS} and above) in ${RESULTS_DIR}/..."
 REMOVED=0
-for S in $(seq 1 9); do
+for S in ${SUBJECTS}; do
     for F in "${RESULTS_DIR}"/Subject_${S}/fold_*/; do
         [ -d "${F}" ] || continue
         FOLD_NUM=$(basename "${F}" | sed 's/fold_//')
@@ -91,9 +94,14 @@ echo ""
 
 ENCODER_TYPE="${ENCODER_TYPE:-delta}"
 
+# Build optional time override flag
+TIME_FLAG=""
+[ -n "${SBATCH_TIME}" ] && TIME_FLAG="--time=${SBATCH_TIME}"
+
 TRAIN_OUTPUT=$(sbatch \
     --array="${ARRAY_TASKS}" \
-    --export="ALL,RESULTS_DIR=${RESULTS_DIR},ENCODER_TYPE=${ENCODER_TYPE},EXTRA_ARGS=${EXTRA_ARGS}" \
+    ${TIME_FLAG} \
+    --export="ALL,RESULTS_DIR=${RESULTS_DIR},ENCODER_TYPE=${ENCODER_TYPE},MOABB_DATASET=${MOABB_DATASET:-BNCI2014_001},EXTRA_ARGS=${EXTRA_ARGS}" \
     "${ARRAY_SCRIPT}")
 TRAIN_JOBID=$(echo "${TRAIN_OUTPUT}" | awk '{print $4}')
 echo "${TRAIN_OUTPUT}"
@@ -114,7 +122,7 @@ for S in ${SUBJECTS}; do
 
     AGG_OUTPUT=$(sbatch --dependency=${DEP} \
                         --job-name="fbcsp_agg_S${S}" \
-                        --export="ALL,SUBJECT_ID=${S},RESULTS_DIR=${RESULTS_DIR}" \
+                        --export="ALL,SUBJECT_ID=${S},RESULTS_DIR=${RESULTS_DIR},MOABB_DATASET=${MOABB_DATASET:-BNCI2014_001}" \
                         run_puhti_aggregate.sh)
     AGG_JOBID=$(echo "${AGG_OUTPUT}" | awk '{print $4}')
     AGG_JOBIDS+=("${AGG_JOBID}")

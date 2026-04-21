@@ -82,7 +82,7 @@ cd "${PROJECT_DIR}"
 # time only after confirming V4.1 baseline is reproduced.
 python main.py train \
     --source moabb \
-    --moabb-dataset BNCI2014_001 \
+    --moabb-dataset "${MOABB_DATASET:-BNCI2014_001}" \
     --subject-id "${SUBJECT_ID}" \
     --fold "${FOLD_IDX}" \
     --n-folds "${N_FOLDS}" \

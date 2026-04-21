@@ -37,6 +37,7 @@ from itertools import combinations
 from typing import Dict, List, Tuple
 
 import numpy as np
+from numpy.linalg import LinAlgError
 from scipy.linalg import eigh
 from scipy.signal import butter, bessel, sosfilt
 from sklearn.covariance import ledoit_wolf as _lw_estimate
@@ -657,9 +658,24 @@ def _solve_csp(
         eigenvectors (high eigenvalue → maximise class-A variance).
     """
     composite = cov_a + cov_b
-    # eigh returns eigenvalues ascending, eigenvectors as columns
-    _, W = eigh(cov_a, composite)
-    return np.concatenate([W[:, :m], W[:, -m:]], axis=1)
+    n = composite.shape[0]
+    # Adaptive regularisation: if the composite is rank-deficient (happens when
+    # n_channels >> n_samples_per_class, e.g. PhysionetMI 64 ch / ~17 samples),
+    # retry eigh with progressively stronger regularisation on the composite.
+    trace_scale = np.trace(composite) / n
+    for extra_reg in (0.0, 1e-4, 1e-3, 1e-2, 5e-2, 0.1, 0.2, 0.5):
+        try:
+            reg_composite = composite + extra_reg * trace_scale * np.eye(n)
+            _, W = eigh(cov_a, reg_composite)
+            if extra_reg > 0.0:
+                logger.debug("_solve_csp: used extra composite reg=%.0e", extra_reg)
+            return np.concatenate([W[:, :m], W[:, -m:]], axis=1)
+        except LinAlgError:
+            continue
+    raise LinAlgError(
+        f"CSP failed for {n}×{n} composite covariance even at max regularisation. "
+        "Each class likely has fewer samples than channels."
+    )
 
 
 # ---------------------------------------------------------------------------

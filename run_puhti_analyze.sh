@@ -37,7 +37,8 @@ cd "${PROJECT_DIR}"
 # Cross-subject summary table + bar chart
 python analyze_results.py \
     --results-dir "${RESULTS_DIR}" \
-    --subjects ${SUBJECTS}
+    --subjects ${SUBJECTS} \
+    --moabb-dataset "${MOABB_DATASET:-BNCI2014_001}"
 
 # Print compact results summary
 echo ""
