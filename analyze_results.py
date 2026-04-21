@@ -133,6 +133,7 @@ def _print_table(
     subjects: list[int],
     stats: dict[int, dict],
     missing: list[int],
+    dataset: str = "BNCI2014_001",
 ) -> None:
     """Print a formatted cross-subject accuracy table to stdout."""
 
@@ -162,7 +163,7 @@ def _print_table(
     sep = "-" * sep_width
 
     print()
-    print("Cross-Subject Accuracy — FBCSP-SNN (BNCI2014_001)")
+    print(f"Cross-Subject Accuracy — FBCSP-SNN ({dataset})")
     print(sep)
     print(_fmt_row([c for c, _ in col_defs]))
     print(sep)
@@ -260,6 +261,7 @@ def _plot_bar_chart(
     stats: dict[int, dict],
     save_path: Path,
     baseline_fp32: float = 0.648,
+    dataset: str = "BNCI2014_001",
 ) -> None:
     """Save a grouped bar chart comparing per-subject FP32 and INT8 accuracy.
 
@@ -408,7 +410,7 @@ def _plot_bar_chart(
     ax.set_xlabel("Subject", fontsize=12)
     ax.set_ylabel("Test Accuracy (%)", fontsize=12)
     ax.set_title(
-        "FBCSP-SNN Cross-Subject Accuracy — BNCI2014_001\n"
+        f"FBCSP-SNN Cross-Subject Accuracy — {dataset}\n"
         "(mean ± std over CV folds)",
         fontsize=13,
     )
@@ -451,6 +453,11 @@ def _parse_args() -> argparse.Namespace:
         help="Previous-pipeline baseline FP32 accuracy to show as reference "
              "(default: 0.648 = 64.8%%)",
     )
+    p.add_argument(
+        "--moabb-dataset", default="BNCI2014_001",
+        help="Dataset name shown in table headers and chart title "
+             "(default: BNCI2014_001)",
+    )
     return p.parse_args()
 
 
@@ -487,14 +494,15 @@ def main() -> None:
         )
         sys.exit(1)
 
-    _print_table(args.subjects, stats, missing)
+    _print_table(args.subjects, stats, missing, dataset=args.moabb_dataset)
 
     chart_path = (
         Path(args.output)
         if args.output
         else results_dir / "cross_subject_accuracy.png"
     )
-    _plot_bar_chart(args.subjects, stats, chart_path, baseline_fp32=args.baseline)
+    _plot_bar_chart(args.subjects, stats, chart_path,
+                    baseline_fp32=args.baseline, dataset=args.moabb_dataset)
 
 
 if __name__ == "__main__":

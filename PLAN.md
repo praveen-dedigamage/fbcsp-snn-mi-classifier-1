@@ -25,7 +25,7 @@ DONE   Item 6  Butterworth MC            σ=2% → +0.06pp mean ✓ (correlated 
 DONE   Item 7  End-to-end stress test    65.9% FP32 → 65.4% full HW ✓ (0.57pp total penalty)
 DONE   Item 8  Lava simulation           FP32 65.9% → Lava 66.1%, gap +0.18pp ✓ (< 1pp)
 DONE   Item 9  Energy estimation         19.1 µJ/inference (Loihi 2) — 3,100× below edge CPU ✓
-TODO   Item 10 Cross-dataset             optional strengthener
+DONE   Item 10 Cross-dataset             BNCI2015_001: 72.8% mean FP32 (12 subj, 2-class); SNN > LDA & SVM ✓
 TODO   Items 11-16  Tables, figures, manuscript, release
 ```
 
@@ -198,11 +198,44 @@ Without these, the paper either can't be written or won't survive review.
   (modern Gm-C) to ~2.75 mJ (conservative), with analog front-end as the dominant term.
   All stages have published silicon implementations; on-chip measurement is future work.
 
-- [ ] **10. Cross-dataset generalization sweep.**
-  Use the existing `run_puhti_dataset_test.sh` scaffolding to run on PhysionetMI, Cho2017,
-  and BNCI2015_001. Even modest accuracy on the other datasets satisfies the
-  "not BNCI2014_001-specific" reviewer concern.
-  Effort: ~3 Puhti submits. ~1 week wall time.
+- [x] **10. Cross-dataset generalization sweep.** ✓ CLOSED 2026-04-21
+  BNCI2015_001 (2-class, 13 ch, 512 Hz, 12 subjects, 5 folds = 60 tasks):
+
+  ```
+  Subj    FP32    CSP-8b  CSP-6b  CSP-4b   LDA     SVM
+  S1      94.1%    94.5    93.2    86.1    95.5%   96.9%
+  S2      94.6%    94.5    94.6    93.8    87.8%   93.9%
+  S3      89.2%    88.9    89.6    88.2    95.1%   79.0%
+  S4      90.4%    90.2    90.2    91.7    78.5%   86.6%
+  S5      73.0%    72.7    72.1    71.4    74.7%   75.1%
+  S6      59.6%    60.1    60.6    60.7    56.8%   60.0%
+  S7      81.9%    81.5    81.5    78.9    75.4%   78.9%
+  S8      60.8%    61.0    61.1    60.4    61.4%   61.2%
+  S9      63.6%    63.5    63.1    63.0    60.1%   64.9%
+  S10     58.7%    58.5    58.2    57.5    60.6%   62.3%
+  S11     51.2%    51.2    51.4    51.3    60.9%   54.1%
+  S12     56.7%    55.9    56.3    55.6    52.5%   50.6%
+  MEAN    72.8%    72.7    72.7    71.5    71.6%   72.0%
+  ```
+
+  PTQ drop: INT8 −0.11 pp | INT6 −0.16 pp | INT4 −1.27 pp (all < 1.5 pp ✓).
+  SNN FP32 72.8% > SVM 72.0% > LDA 71.6% on identical FBCSP features.
+  5/12 subjects near 2-class chance (50%): S6, S8, S10–S12 — consistent with
+  BCI illiteracy; LDA/SVM also fail on same subjects. Excluding these five,
+  remaining 7 subjects mean = 81.8% FP32.
+
+  Note: dataset uses different class count (2 vs 4), channel count (13 vs 22),
+  and sampling rate (512 vs 250 Hz) to BNCI2014_001 — no per-dataset retuning.
+
+  **Paper sentence:** "Evaluated on BNCI2015_001 — a dataset with different class
+  count (2 vs 4), electrode count (13 vs 22), and sampling rate (512 vs 250 Hz)
+  — without any hyperparameter retuning, the pipeline achieves 72.8% mean FP32
+  accuracy (12 subjects, 5-fold CV), exceeding FBCSP+LDA (71.6%) and FBCSP+SVM
+  (72.0%) on the same features. INT8 post-training quantisation costs only
+  0.11 pp. Five subjects show near-chance accuracy, consistent with the BCI
+  illiteracy phenomenon observed across all three classifiers."
+
+  Next cross-dataset: PhysionetMI or Cho2017 (planned 2026-04-22).
 
 - [ ] **11. Master results table.**
   One consolidated table covering: baseline → static6 → causal → Bessel → ADM →
