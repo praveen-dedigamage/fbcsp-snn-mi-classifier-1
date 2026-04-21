@@ -42,6 +42,9 @@ DATASET_REGISTRY: Dict[str, Dict] = {
         "n_channels": 64,
         "description": "PhysioNet Motor Imagery (4-class, 109 subjects)",
         "moabb_cls": "PhysionetMI",
+        # Explicit event names prevent MOABB from including T0/rest as a 5th class.
+        # PhysionetMI runs 3,7,11 → left_hand/right_hand; runs 4,8,12 → hands/feet.
+        "events": ["left_hand", "right_hand", "hands", "feet"],
     },
     "Cho2017": {
         "n_classes": 2,
@@ -193,7 +196,12 @@ def load_moabb(
             "MOABB paradigm not available. Ensure moabb>=1.1 is installed."
         ) from exc
 
-    paradigm = MotorImagery(n_classes=effective_n_classes)
+    events = info.get("events", None)
+    if events is not None:
+        paradigm = MotorImagery(events=events, n_classes=effective_n_classes)
+        logger.info("Using explicit event list for %s: %s", dataset_name, events)
+    else:
+        paradigm = MotorImagery(n_classes=effective_n_classes)
 
     logger.info("Fetching epochs via MOABB paradigm (this may download data)...")
     X_all, y_all, metadata = paradigm.get_data(
