@@ -383,23 +383,24 @@ All results: session 1 train / session 2 test, FP32.
 
 ### Hardware-compatible configuration — per-subject results (⭐ paper number)
 
-causal Butterworth + ADM encoder, no sliding-window augmentation, 5-fold CV:
+causal Butterworth + ADM encoder, no sliding-window augmentation, 5-fold CV
+(Results_adm_static6_ptq, 9 subjects × 5 folds = 45 tasks):
 
-| Subject | FP32 Acc | INT8 (8-bit) | CSP 6-bit | CSP 4-bit |
-|---|---|---|---|---|
-| S1 | 82.6% | — | — | — |
-| S2 | 50.6% | — | — | — |
-| S3 | 72.4% | — | — | — |
-| S4 | 61.7% | — | — | — |
-| S5 | 44.9% | — | — | — |
-| S6 | 48.3% | — | — | — |
-| S7 | 71.7% | — | — | — |
-| S8 | 80.8% | — | — | — |
-| S9 | 80.5% | — | — | — |
-| **Mean** | **65.8%** | **+0.18 pp** | **+0.23 pp** | **−0.89 pp** |
+| Subject | FP32 Acc | CSP-8b | CSP-6b | CSP-4b | LDA | SVM |
+|---|---|---|---|---|---|---|
+| S1 | 82.6 ±4.0% | 82.9% | 82.9% | 82.8% | 51.3% | 77.1% |
+| S2 | 50.5 ±2.3% | 50.6% | 51.0% | 51.2% | 35.1% | 44.7% |
+| S3 | 72.4 ±4.4% | 72.4% | 72.6% | 72.6% | 50.4% | 74.3% |
+| S4 | 61.7 ±2.6% | 61.7% | 62.1% | 61.0% | 39.0% | 62.8% |
+| S5 | 44.9 ±5.3% | 44.4% | 43.8% | 44.4% | 30.5% | 37.2% |
+| S6 | 48.3 ±1.6% | 49.0% | 49.0% | 48.6% | 33.5% | 48.8% |
+| S7 | 71.7 ±4.6% | 71.9% | 71.7% | 69.9% | 60.5% | 69.9% |
+| S8 | 80.8 ±3.0% | 80.9% | 81.2% | 79.7% | 50.1% | 76.0% |
+| S9 | 80.5 ±3.6% | 81.0% | 80.6% | 80.0% | 36.0% | 71.3% |
+| **Mean** | **65.9 ±14.1%** | **66.1% (+0.20 pp)** | **66.1% (+0.20 pp)** | **65.6% (−0.30 pp)** | **42.9%** | **62.4%** |
 
-INT8 SNN and CSP quantisation drops are reported relative to FP32 (positive = accuracy improves).
-Per-subject INT8/PTQ breakdown available in `Results_adm_static6_ptq/`.
+CSP quantisation drops relative to FP32 (positive = accuracy improves). All three precision
+levels pass the < 1 pp threshold — the ReRAM crossbar can use 4-bit weights with negligible cost.
 
 ### ADM encoder — software upper bound
 
@@ -1029,7 +1030,7 @@ evaluate_model(model_int8, ...) → test_acc_int8
 stage maps to a published silicon primitive, with validated tolerance to hardware
 imperfections at each stage.
 
-**Paper number: 65.8%** mean FP32 (9 subjects, BNCI2014_001, 5-fold CV, causal Butterworth + ADM).
+**Paper number: 65.9%** mean FP32 (9 subjects, BNCI2014_001, 5-fold CV, causal Butterworth + ADM).
 
 | Item | Status | Result |
 |---|---|---|
