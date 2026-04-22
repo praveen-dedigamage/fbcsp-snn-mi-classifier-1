@@ -659,23 +659,31 @@ def _solve_csp(
     """
     composite = cov_a + cov_b
     n = composite.shape[0]
-    # Adaptive regularisation: if the composite is rank-deficient (happens when
-    # n_channels >> n_samples_per_class, e.g. PhysionetMI 64 ch / ~17 samples),
-    # retry eigh with progressively stronger regularisation on the composite.
-    trace_scale = np.trace(composite) / n
-    for extra_reg in (0.0, 1e-4, 1e-3, 1e-2, 5e-2, 0.1, 0.2, 0.5):
-        try:
-            reg_composite = composite + extra_reg * trace_scale * np.eye(n)
-            _, W = eigh(cov_a, reg_composite)
-            if extra_reg > 0.0:
-                logger.debug("_solve_csp: used extra composite reg=%.0e", extra_reg)
-            return np.concatenate([W[:, :m], W[:, -m:]], axis=1)
-        except LinAlgError:
-            continue
-    raise LinAlgError(
-        f"CSP failed for {n}×{n} composite covariance even at max regularisation. "
-        "Each class likely has fewer samples than channels."
-    )
+
+    # Symmetrise to eliminate floating-point asymmetry before factorisation.
+    composite = (composite + composite.T) * 0.5
+
+    # Eigenvalue flooring: guarantee positive definiteness for rank-deficient
+    # composites (happens when n_channels >> n_samples_per_class, e.g.
+    # PhysionetMI: 64 channels, ~17 samples/class → rank-17 covariance).
+    # Floor = 1e-6 × largest eigenvalue (relative), minimum 1e-10 (absolute).
+    # Using numpy eigh for the full decomposition then reconstructing is
+    # more numerically reliable than scipy's Cholesky-based generalised solver
+    # on ill-conditioned matrices.
+    eigvals, eigvecs = np.linalg.eigh(composite)
+    floor = max(float(eigvals[-1]) * 1e-6, 1e-10)
+    if eigvals[0] < floor:
+        n_floored = int(np.sum(eigvals < floor))
+        eigvals = np.maximum(eigvals, floor)
+        composite = (eigvecs * eigvals) @ eigvecs.T
+        composite = (composite + composite.T) * 0.5  # re-symmetrise after reconstruction
+        logger.debug(
+            "_solve_csp: floored %d/%d eigenvalues (min %.2e → %.2e) for %d×%d composite",
+            n_floored, n, float(np.linalg.eigvalsh(cov_a + cov_b)[0]), floor, n, n,
+        )
+
+    _, W = eigh(cov_a, composite)
+    return np.concatenate([W[:, :m], W[:, -m:]], axis=1)
 
 
 # ---------------------------------------------------------------------------
