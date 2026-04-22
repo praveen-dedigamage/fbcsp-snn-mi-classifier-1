@@ -48,4 +48,7 @@ echo "  Wall time:   2:00:00 per fold (160 Hz)"
 echo "=============================================="
 echo ""
 
-bash submit_puhti.sh "${RESULTS_DIR}"
+# --augment-windows: sliding-window CSP augmentation (3 windows per trial).
+# Critical for PhysionetMI which has only ~90 trials/subject (18/class).
+# Already confirmed working in smoke test (run_puhti_dataset_test.sh).
+bash submit_puhti.sh "${RESULTS_DIR}" --augment-windows
