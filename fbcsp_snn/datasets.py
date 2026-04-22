@@ -43,8 +43,14 @@ DATASET_REGISTRY: Dict[str, Dict] = {
         "description": "PhysioNet Motor Imagery (4-class, 109 subjects)",
         "moabb_cls": "PhysionetMI",
         # Explicit event names prevent MOABB from including T0/rest as a 5th class.
-        # PhysionetMI runs 3,7,11 → left_hand/right_hand; runs 4,8,12 → hands/feet.
+        # PhysionetMI imagined runs: 4,8,12 → left_hand/right_hand; 6,10,14 → hands/feet.
+        # Executed runs:             3,7,11 → left_hand/right_hand; 5,9,13  → hands/feet.
+        # Load both imagined AND executed (12 runs total, ~360 trials/subject) so that
+        # each class has enough samples for CSP (64 channels require >>64 trials/class).
+        # MOABB default (imagined=True, executed=False) only loads ~90 trials on some
+        # versions, causing rank-deficient covariances and near-chance accuracy.
         "events": ["left_hand", "right_hand", "hands", "feet"],
+        "dataset_kwargs": {"imagined": True, "executed": True},
     },
     "Cho2017": {
         "n_classes": 2,
@@ -186,7 +192,11 @@ def load_moabb(
             f"Failed to import MOABB dataset class '{moabb_cls_name}': {exc}"
         ) from exc
 
-    dataset = DatasetCls()
+    # Pass any dataset-specific constructor kwargs (e.g. imagined/executed for PhysionetMI)
+    dataset_kwargs = info.get("dataset_kwargs", {})
+    if dataset_kwargs:
+        logger.info("Creating %s with kwargs: %s", moabb_cls_name, dataset_kwargs)
+    dataset = DatasetCls(**dataset_kwargs)
 
     # Use MOABB paradigm to epoch the data
     try:
