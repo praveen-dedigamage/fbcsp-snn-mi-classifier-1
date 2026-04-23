@@ -49,8 +49,13 @@ DATASET_REGISTRY: Dict[str, Dict] = {
         # each class has enough samples for CSP (64 channels require >>64 trials/class).
         # MOABB default (imagined=True, executed=False) only loads ~90 trials on some
         # versions, causing rank-deficient covariances and near-chance accuracy.
+        #
+        # Epoch window: fixation is 0–2 s, imagery is 2–3 s (only 1 s of actual MI).
+        # tmin=0, tmax=1 relative to the T1/T2 imagery event captures exactly the
+        # 1-second MI window, avoiding contamination from the 2 s fixation period.
         "events": ["left_hand", "right_hand", "hands", "feet"],
         "dataset_kwargs": {"imagined": True, "executed": True},
+        "paradigm_kwargs": {"tmin": 0, "tmax": 1},
     },
     "Cho2017": {
         "n_classes": 2,
@@ -207,11 +212,14 @@ def load_moabb(
         ) from exc
 
     events = info.get("events", None)
+    paradigm_kwargs = info.get("paradigm_kwargs", {})
+    if paradigm_kwargs:
+        logger.info("Using paradigm kwargs for %s: %s", dataset_name, paradigm_kwargs)
     if events is not None:
-        paradigm = MotorImagery(events=events, n_classes=effective_n_classes)
+        paradigm = MotorImagery(events=events, n_classes=effective_n_classes, **paradigm_kwargs)
         logger.info("Using explicit event list for %s: %s", dataset_name, events)
     else:
-        paradigm = MotorImagery(n_classes=effective_n_classes)
+        paradigm = MotorImagery(n_classes=effective_n_classes, **paradigm_kwargs)
 
     logger.info("Fetching epochs via MOABB paradigm (this may download data)...")
     X_all, y_all, metadata = paradigm.get_data(
