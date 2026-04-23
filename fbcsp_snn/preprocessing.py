@@ -137,8 +137,20 @@ def window_filter_bank(
     """
     n_trials, _, n_samples = X_bands[0].shape
     starts = list(range(0, n_samples - window_samples + 1, step_samples))
-    n_win = len(starts)
 
+    if not starts:
+        # Epoch shorter than one window (e.g. tmax=1 at 160 Hz gives 161 samples
+        # which is smaller than the default window size tuned for 250 Hz data).
+        # Fall back to using the full epoch as a single window per trial.
+        logger.warning(
+            "window_filter_bank: epoch length %d < window_samples %d — "
+            "skipping augmentation, returning full epochs unchanged.",
+            n_samples,
+            window_samples,
+        )
+        return X_bands, y
+
+    n_win = len(starts)
     y_aug = np.repeat(y, n_win)
 
     X_bands_aug: List[np.ndarray] = []
