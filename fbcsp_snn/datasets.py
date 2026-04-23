@@ -50,12 +50,13 @@ DATASET_REGISTRY: Dict[str, Dict] = {
         # MOABB default (imagined=True, executed=False) only loads ~90 trials on some
         # versions, causing rank-deficient covariances and near-chance accuracy.
         #
-        # Epoch window: use MOABB defaults (tmin=0, tmax=3 relative to T0 trial onset).
-        # The fixation is 0–2 s, imagery is 2–3 s within that 3 s trial window.
-        # Published benchmarks (e.g. EEGNet 65.1%) all use the MOABB default window;
-        # do NOT override tmin/tmax here so our results are directly comparable.
+        # Epoch window: trial is 3 s (fixation 0–2 s, imagery 2–3 s relative to T0).
+        # tmin=2, tmax=3 selects the 1-second imagery period if MOABB epochs from T0.
+        # If MOABB epochs from T1/T2 (imagery onset), tmin=0, tmax=1 would be correct;
+        # the smoke test result (band selection in mu/beta vs. gamma) will distinguish.
         "events": ["left_hand", "right_hand", "hands", "feet"],
         "dataset_kwargs": {"imagined": True, "executed": True},
+        "paradigm_kwargs": {"tmin": 2, "tmax": 3},
     },
     "Cho2017": {
         "n_classes": 2,
