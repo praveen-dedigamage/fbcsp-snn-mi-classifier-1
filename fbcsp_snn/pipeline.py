@@ -203,6 +203,22 @@ def _run_single_fold(
     X_bands_val = apply_filter_bank(X_f_val, bands, sfreq, order=4, filter_type=cfg.filter_type)
     X_bands_te  = apply_filter_bank(X_test,  bands, sfreq, order=4, filter_type=cfg.filter_type)
 
+    # ---- Pre-CSP crop (dataset-specific, e.g. PhysionetMI imagery window) ----
+    # Filtering on the full epoch avoids edge effects; cropping afterwards gives
+    # CSP clean signal from only the imagery period (no fixation contamination).
+    from fbcsp_snn.datasets import DATASET_REGISTRY
+    crop_s = DATASET_REGISTRY.get(cfg.moabb_dataset, {}).get("crop_s", None)
+    if crop_s is not None:
+        c0 = int(crop_s[0] * sfreq)
+        c1 = int(crop_s[1] * sfreq) + 1   # +1 so tmax second is included
+        X_bands_tr  = [X[:, :, c0:c1] for X in X_bands_tr]
+        X_bands_val = [X[:, :, c0:c1] for X in X_bands_val]
+        X_bands_te  = [X[:, :, c0:c1] for X in X_bands_te]
+        logger.info(
+            "Pre-CSP crop %.1f–%.1f s → %d samples/trial  (sfreq=%.0f Hz)",
+            crop_s[0], crop_s[1], c1 - c0, sfreq,
+        )
+
     # ---- Sliding-window augmentation (CSP fitting only) ----
     # Windows the filtered training bands to increase covariance sample count.
     # Val and test are never touched; CSP spatial filters are applied to
