@@ -50,12 +50,12 @@ DATASET_REGISTRY: Dict[str, Dict] = {
         # MOABB default (imagined=True, executed=False) only loads ~90 trials on some
         # versions, causing rank-deficient covariances and near-chance accuracy.
         #
-        # Epoch window: fixation is 0–2 s, imagery is 2–3 s (only 1 s of actual MI).
-        # tmin=0, tmax=1 relative to the T1/T2 imagery event captures exactly the
-        # 1-second MI window, avoiding contamination from the 2 s fixation period.
+        # Epoch window: use MOABB defaults (tmin=0, tmax=3 relative to T0 trial onset).
+        # The fixation is 0–2 s, imagery is 2–3 s within that 3 s trial window.
+        # Published benchmarks (e.g. EEGNet 65.1%) all use the MOABB default window;
+        # do NOT override tmin/tmax here so our results are directly comparable.
         "events": ["left_hand", "right_hand", "hands", "feet"],
         "dataset_kwargs": {"imagined": True, "executed": True},
-        "paradigm_kwargs": {"tmin": 0, "tmax": 1},
     },
     "Cho2017": {
         "n_classes": 2,
