@@ -488,8 +488,15 @@ def _spd_log(S: np.ndarray) -> np.ndarray:
 
 
 def _spd_exp(S: np.ndarray) -> np.ndarray:
-    """Matrix exponential of a symmetric matrix S = V diag(d) V^T → V diag(exp d) V^T."""
+    """Matrix exponential of a symmetric matrix S = V diag(d) V^T → V diag(exp d) V^T.
+
+    Eigenvalues are clamped to [-500, 500] before exponentiation to prevent
+    float64 overflow (exp overflows above ~709).  This bounds the step size in
+    Riemannian gradient descent without changing the converged solution for
+    well-conditioned inputs.
+    """
     vals, vecs = eigh(S)
+    vals = np.clip(vals, -500.0, 500.0)
     return (vecs * np.exp(vals)) @ vecs.T
 
 
@@ -531,6 +538,15 @@ def _riemannian_mean_from_covs(
         grad /= n_trials
 
         M_new = M_sqrt @ _spd_exp(grad) @ M_sqrt
+
+        if not np.isfinite(M_new).all():
+            # Gradient step overflowed despite clamping — fall back to arithmetic mean.
+            logger.warning(
+                "_riemannian_mean_from_covs: overflow after %d iterations; "
+                "falling back to arithmetic mean.",
+                _ + 1,
+            )
+            return covs.mean(axis=0)
 
         if np.linalg.norm(M_new - M, "fro") < tol:
             M = M_new
