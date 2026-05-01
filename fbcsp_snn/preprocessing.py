@@ -309,15 +309,35 @@ class PairwiseCSP:
             n_channels, self.euclidean_alignment, self.riemannian_mean,
         )
 
+        try:
+            from tqdm import tqdm as _tqdm
+        except ImportError:
+            _tqdm = None
+
+        total_steps = n_bands * n_pairs
+        pbar = (
+            _tqdm(total=total_steps, desc="PairwiseCSP", unit="cov",
+                  dynamic_ncols=True,
+                  bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]")
+            if _tqdm is not None else None
+        )
+
         for b_idx, X_band in enumerate(X_bands):
             # ---- Euclidean Alignment ----
             if self.euclidean_alignment:
+                if pbar is not None:
+                    pbar.set_description(f"PairwiseCSP EA band {b_idx + 1}/{n_bands}")
                 R_invsqrt = _compute_ea_whitener(X_band)
                 self.ea_whiteners_[b_idx] = R_invsqrt
                 X_band = _apply_ea(X_band, R_invsqrt)
 
             for p_idx, pair in enumerate(self.pairs_):
                 c1, c2 = pair
+                if pbar is not None:
+                    pbar.set_description(
+                        f"PairwiseCSP band {b_idx + 1}/{n_bands} pair {p_idx + 1}/{n_pairs} "
+                        f"(cls {c1} vs {c2})"
+                    )
                 logger.info(
                     "  CSP band %2d/%d  pair %d/%d  (classes %s vs %s)  "
                     "train_A=%d  train_B=%d",
@@ -345,9 +365,12 @@ class PairwiseCSP:
                     cov_b = _regularise(cov_b, self.lambda_r)
                     W = _solve_csp(cov_a, cov_b, self.m)
                 self.filters_[(b_idx, pair)] = W
+                if pbar is not None:
+                    pbar.update(1)
 
-        n_bands = len(X_bands)
-        n_pairs = len(self.pairs_)
+        if pbar is not None:
+            pbar.close()
+
         logger.info(
             "PairwiseCSP fit: %d bands × %d pairs × %d filters = %d total filters"
             "  (EA: %s  RiemannMean: %s  LedoitWolf: %s)",
