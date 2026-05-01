@@ -69,6 +69,15 @@ unset APPTAINER_BIND
 module purge
 source "${PROJECT_DIR}/.venv/bin/activate"
 
+# Limit BLAS/OpenMP threads to the CPUs allocated by SLURM.
+# Without this, numpy/scipy spawns threads equal to the node's full core count
+# (40 on Puhti V100 nodes) even though only --cpus-per-task=4 are allocated,
+# causing massive thread contention and 10-30× slowdown in Riemannian mean.
+export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-4}"
+export MKL_NUM_THREADS="${SLURM_CPUS_PER_TASK:-4}"
+export OPENBLAS_NUM_THREADS="${SLURM_CPUS_PER_TASK:-4}"
+export NUMEXPR_NUM_THREADS="${SLURM_CPUS_PER_TASK:-4}"
+
 export PYTHONPATH="${PROJECT_DIR}:${PYTHONPATH:-}"
 
 # MOABB/MNE data cache — keep on scratch, not home (home quota is small)
