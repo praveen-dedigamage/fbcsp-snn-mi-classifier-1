@@ -300,6 +300,14 @@ class PairwiseCSP:
         self.filters_ = {}
 
         n_channels = X_bands[0].shape[1]
+        n_bands = len(X_bands)
+        n_pairs = len(self.pairs_)
+        logger.info(
+            "PairwiseCSP fit starting: %d bands × %d pairs × %d filters = %d total"
+            "  n_channels=%d  EA=%s  RiemannMean=%s",
+            n_bands, n_pairs, 2 * self.m, n_bands * n_pairs * 2 * self.m,
+            n_channels, self.euclidean_alignment, self.riemannian_mean,
+        )
 
         for b_idx, X_band in enumerate(X_bands):
             # ---- Euclidean Alignment ----
@@ -308,8 +316,14 @@ class PairwiseCSP:
                 self.ea_whiteners_[b_idx] = R_invsqrt
                 X_band = _apply_ea(X_band, R_invsqrt)
 
-            for pair in self.pairs_:
+            for p_idx, pair in enumerate(self.pairs_):
                 c1, c2 = pair
+                logger.info(
+                    "  CSP band %2d/%d  pair %d/%d  (classes %s vs %s)  "
+                    "train_A=%d  train_B=%d",
+                    b_idx + 1, n_bands, p_idx + 1, n_pairs, c1, c2,
+                    int((y == c1).sum()), int((y == c2).sum()),
+                )
                 if self.ledoit_wolf:
                     # LW per-trial covariances → Riemannian mean (or arithmetic).
                     # Replaces only the regularisation; averaging method follows
@@ -526,10 +540,15 @@ def _riemannian_mean_from_covs(
     np.ndarray
         Riemannian mean, shape ``(n_channels, n_channels)``.
     """
-    n_trials = covs.shape[0]
+    n_trials, n_ch = covs.shape[0], covs.shape[1]
     M = covs.mean(axis=0)   # arithmetic initialisation
 
-    for _ in range(max_iter):
+    logger.debug(
+        "_riemannian_mean_from_covs: n_trials=%d  n_channels=%d  max_iter=%d",
+        n_trials, n_ch, max_iter,
+    )
+
+    for it in range(max_iter):
         M_sqrt, M_invsqrt = _spd_sqrt_invsqrt(M)
 
         grad = np.zeros_like(M)
@@ -544,11 +563,16 @@ def _riemannian_mean_from_covs(
             logger.warning(
                 "_riemannian_mean_from_covs: overflow after %d iterations; "
                 "falling back to arithmetic mean.",
-                _ + 1,
+                it + 1,
             )
             return covs.mean(axis=0)
 
-        if np.linalg.norm(M_new - M, "fro") < tol:
+        delta = np.linalg.norm(M_new - M, "fro")
+        logger.debug("  iter %2d/%d  Δ=%.3e", it + 1, max_iter, delta)
+        if delta < tol:
+            logger.debug(
+                "_riemannian_mean_from_covs: converged in %d iterations", it + 1
+            )
             M = M_new
             break
         M = M_new
