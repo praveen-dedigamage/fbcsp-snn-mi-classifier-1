@@ -628,8 +628,10 @@ def _riemannian_mean_from_covs_gpu(
     import torch
     device = torch.device("cuda")
 
-    # float64 for numerical stability — matches the CPU path
-    covs_t = torch.from_numpy(covs.astype(np.float64)).to(device)   # (N, C, C)
+    # float64 for numerical stability — matches the CPU path.
+    # Use torch.tensor() rather than from_numpy(astype()) to avoid creating
+    # an extra numpy copy of the (N, C, C) array in system RAM.
+    covs_t = torch.tensor(covs, dtype=torch.float64, device=device)  # (N, C, C)
     M = covs_t.mean(0)                                                # (C, C)
 
     for it in range(max_iter):
