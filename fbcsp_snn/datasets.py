@@ -65,6 +65,16 @@ DATASET_REGISTRY: Dict[str, Dict] = {
         "description": "Cho 2017 (2-class MI, 52 subjects)",
         "moabb_cls": "Cho2017",
     },
+    "Schirrmeister2017": {
+        "n_classes": 4,
+        "sfreq": 500,
+        "n_channels": 128,
+        "description": "High Gamma Dataset (4-class MI, 14 subjects, 500 Hz)",
+        "moabb_cls": "Schirrmeister2017",
+        # 4 classes: right_hand, left_hand, rest, feet (~963 trials/subject).
+        # Single session → StratifiedShuffleSplit 80/20.
+        # ~240 trials/class gives full-rank 128×128 covariances for CSP.
+    },
     "BNCI2015_001": {
         "n_classes": 2,
         "sfreq": 512,
