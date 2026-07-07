@@ -49,7 +49,11 @@ from fbcsp_snn.mibif import MIBIFSelector
 from fbcsp_snn.model import SNNClassifier, maybe_compile
 from fbcsp_snn.preprocessing import PairwiseCSP, ZNormaliser, apply_filter_bank
 from fbcsp_snn.quantization import quantize_csp_filters, quantize_model, quantization_report
-from fbcsp_snn.training import evaluate_model, evaluate_model_with_events, train_fold
+from fbcsp_snn.training import (
+    evaluate_model,
+    evaluate_model_with_event_breakdown,
+    train_fold,
+)
 from fbcsp_snn.visualization import (
     plot_confusion_matrix,
     plot_neuron_traces,
@@ -252,7 +256,11 @@ def _run_single_fold(
         spikes_te  = mibif.transform(spikes_te)
 
     n_input = spikes_tr.shape[2]
-    logger.info("Fold %d  n_input_features: %d", fold_idx, n_input)
+    n_timesteps = spikes_tr.shape[0]
+    logger.info(
+        "Fold %d  n_input_features: %d  n_timesteps: %d",
+        fold_idx, n_input, n_timesteps,
+    )
 
     # ---- Spike propagation plot (a few training trials) ----
     plot_spike_propagation(
@@ -295,13 +303,17 @@ def _run_single_fold(
     )
 
     # ---- FP32 evaluate ----
-    # Test-set evaluation also counts total spike events (input + hidden +
-    # output layers) per trial (B15) — the measured firing rate that should
-    # back any energy estimate, replacing the previous unmeasured proxy.
+    # Test-set evaluation also counts spike events per layer (input/hidden/
+    # output) per trial (B15) — the measured firing rates that should back
+    # any energy estimate, replacing the previous unmeasured proxy. Per-layer
+    # (not just combined) so compute_energy.py can weight each layer's
+    # spikes by its own fan-out rather than treating every spike as equally
+    # costly.
     val_acc_fp32,  val_preds_fp32  = evaluate_model(model, spikes_val, y_f_val_0,  DEVICE)
-    test_acc_fp32, test_preds_fp32, mean_events_per_trial = evaluate_model_with_events(
+    test_acc_fp32, test_preds_fp32, event_counts = evaluate_model_with_event_breakdown(
         model, spikes_te, y_test_0, DEVICE
     )
+    mean_events_per_trial = event_counts["total"]
 
     # ---- INT8 simulate + evaluate ----
     model_int8 = quantize_model(model, bits=8)
@@ -397,6 +409,7 @@ def _run_single_fold(
         "dataset":            cfg.moabb_dataset,
         "n_classes":          n_classes,
         "n_input_features":   n_input,
+        "n_timesteps":        n_timesteps,
         "bands":              [[float(lo), float(hi)] for lo, hi in bands],
         "filter_type":        cfg.filter_type,
         "encoder_type":       cfg.encoder_type,
@@ -426,8 +439,13 @@ def _run_single_fold(
         # Measured end-to-end spike events per trial (B15) — replaces the
         # unmeasured "0.15 spikes/neuron/timestep" proxy previously used in
         # the paper's energy estimate (that number was actually the input
-        # encoder's rate, not a whole-network measurement).
+        # encoder's rate, not a whole-network measurement). Broken down per
+        # layer (not just the combined total) so compute_energy.py can
+        # weight each layer's spikes by its own fan-out.
         "mean_events_per_trial": round(mean_events_per_trial, 3),
+        "mean_input_events_per_trial":  round(event_counts["input"], 3),
+        "mean_hidden_events_per_trial": round(event_counts["hidden"], 3),
+        "mean_output_events_per_trial": round(event_counts["output"], 3),
         # PTQ CSP — analog crossbar precision sweep (FP32 SNN, quantized CSP only)
         "test_acc_csp_8bit":  round(ptq_accs[8], 6),
         "test_acc_csp_6bit":  round(ptq_accs[6], 6),
@@ -735,6 +753,8 @@ def run_aggregate(cfg: Config) -> None:
         "fold", "best_val_acc_fp32", "best_epoch", "stopped_epoch",
         "val_acc_fp32", "val_acc_int8",
         "test_acc_fp32", "test_acc_int8", "mean_events_per_trial",
+        "mean_input_events_per_trial", "mean_hidden_events_per_trial",
+        "mean_output_events_per_trial",
         "test_acc_csp_8bit", "test_acc_csp_6bit", "test_acc_csp_4bit",
         *joint_fieldnames,
         "val_acc_lda", "test_acc_lda", "val_acc_svm", "test_acc_svm",
@@ -759,6 +779,9 @@ def run_aggregate(cfg: Config) -> None:
         "test_acc_fp32":       round(float(np.mean(_col("test_acc_fp32"))), 6),
         "test_acc_int8":       round(float(np.mean(_col("test_acc_int8"))), 6),
         "mean_events_per_trial": round(float(np.mean(_col("mean_events_per_trial"))), 3) if _col("mean_events_per_trial") else "",
+        "mean_input_events_per_trial":  round(float(np.mean(_col("mean_input_events_per_trial"))), 3) if _col("mean_input_events_per_trial") else "",
+        "mean_hidden_events_per_trial": round(float(np.mean(_col("mean_hidden_events_per_trial"))), 3) if _col("mean_hidden_events_per_trial") else "",
+        "mean_output_events_per_trial": round(float(np.mean(_col("mean_output_events_per_trial"))), 3) if _col("mean_output_events_per_trial") else "",
         "test_acc_csp_8bit":   round(float(np.mean(_col("test_acc_csp_8bit"))), 6) if _col("test_acc_csp_8bit") else "",
         "test_acc_csp_6bit":   round(float(np.mean(_col("test_acc_csp_6bit"))), 6) if _col("test_acc_csp_6bit") else "",
         "test_acc_csp_4bit":   round(float(np.mean(_col("test_acc_csp_4bit"))), 6) if _col("test_acc_csp_4bit") else "",

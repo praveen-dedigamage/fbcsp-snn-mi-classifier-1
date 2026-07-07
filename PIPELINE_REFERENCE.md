@@ -859,3 +859,110 @@ possible without `torch`/`scipy` dependencies installed for the full stack:
   `torch.jit.script` compilation of the generalized encoder kernel, and the
   actual end-to-end sweep execution against a real trained checkpoint —
   both need the first real Puhti run.
+
+---
+
+## 12. Energy computation — extending an existing script, not replacing it (2026-07-08)
+
+Mid-session discovery: Puhti's project directory had ~40 `Results_*`
+directories and several loose top-level scripts never visible to this repo
+(untracked by git). Among them, a working `compute_energy.py` +
+`run_lava_infer.py` pair — considerably more developed than assumed at
+first. Decision: extend, don't replace.
+
+### 12a. What the existing script already did well
+
+- **Real measured Lava SynOps**, not an assumed firing rate — reads
+  `Results_lava/lava_summary.csv` (produced by `run_lava_infer.py`, which
+  runs actual Lava-framework inference and reports the framework's own
+  synaptic-operation accounting).
+- **Real cited references** for an analog front-end: Gm-C filter bank
+  (Qian 2017, Verhoeven 2007), ADM encoder (Sharifshazileh 2021), ReRAM CSP
+  crossbar (Burr 2017) — both a "modern" and "conservative" per-stage
+  estimate.
+- **Real cited GPU/CPU/EEGNet-M4 comparisons** — V100 TDP-based GPU
+  baseline, ARM Cortex-A72 edge-CPU baseline, and a genuinely measured
+  external figure (Burrello et al. 2020, EEGNet on Cortex-M4F, 4.28 mJ).
+- **Already states its own honesty boundary**: only the Loihi SNN figure is
+  measured; front-end figures are extrapolated from cited silicon, reported
+  as estimates, not measured results.
+
+This already resolves all three problems flagged in B8 (paper folder
+`TODO.md`) — the front-end scope, the firing-rate justification, and the
+missing GPU baseline — none of which needed to be built from scratch.
+
+### 12b. Important clarification that reshapes the framing
+
+User: **Loihi 2 is a digital, asynchronous, event-driven chip, not
+analog.** The existing script's Gm-C/ADM/ReRAM front-end estimates describe
+a *separate*, more speculative hardware story — a hypothetical all-analog
+front-end that could pair with a digital Loihi backend — not a claim that
+Loihi itself is analog. This distinction wasn't explicit in the original
+script's language ("Full Analog-Neuromorphic Pipeline"); now stated
+explicitly in the module docstring and the `_print_frontend_breakdown()`
+output ("SNN on Loihi 2 (digital) ← measured... Loihi 2 itself is not
+analog").
+
+This also retroactively clarifies §9-§11's reliability/noise-injection work:
+that sweep models a hypothetical all-analog realization (Gm-C filters,
+comparator thresholds, RC time-constant mismatch, crossbar conductance
+variation) — a legitimate, separate research question from "does this run
+correctly on real Loihi 2 hardware," which is what the Lava-based energy
+measurement actually answers. Both are valid, but they're different claims
+and shouldn't be conflated when the paper describes them.
+
+### 12c. What got added — a cross-check, not a replacement
+
+New `load_pytorch_side_synops()` and `_print_cross_check()` in
+`compute_energy.py`: computes an independent SynOps estimate from this
+codebase's own B15 instrumentation —
+
+```
+SynOps_pytorch = mean_input_events_per_trial * n_hidden
+                 + mean_hidden_events_per_trial * n_output
+```
+
+— the same fan-out-weighted logic as the reliability sweep's energy
+reasoning (§9), reading directly from `pipeline_params.json` (averaged
+across a subject's folds). Reported side-by-side against Lava's measured
+`synops_total_mean` per subject, with a ratio column.
+
+**Rationale for keeping Lava primary, not switching to this:** Lava's
+number is the real target framework's own accounting for real,
+currently-deployable digital hardware — a stronger claim than anything
+derived from PyTorch-side instrumentation in a different framework. The
+cross-check exists to *validate* that number, not compete with it: rough
+agreement is corroborating evidence before either number goes in the paper;
+a large disagreement would mean investigating which measurement (or which
+assumption feeding it) is off, before trusting either.
+
+Verified the cross-check's arithmetic and its graceful skip-on-missing-data
+behavior (folds trained before the B15 event-breakdown existed are logged
+and skipped, not silently zero-filled or crashed on) with a mock
+`pipeline_params.json` fixture — confirmed both before considering this
+done.
+
+### 12d. Also needed: a new field, `n_timesteps`
+
+While building this, checked how many timesteps the spike tensor actually
+has — the paper states `T_s=50` (`main.tex:386`), but
+`tests/test_spike_snn.py:123`'s own assertion shows the real spike tensor
+shape is `(1001, 288, total_features)` for BNCI2014-001 — **T is actually
+the raw EEG sample count (~1001 at 250 Hz over ~4s), not a fixed 50.** This
+is a previously-undiscovered paper-vs-code mismatch, and it directly affects
+the paper's own `eq:energy` (which multplies by `T_s=50`, off by ~20x from
+the real value if so). `n_timesteps` wasn't saved anywhere in
+`pipeline_params.json` before now — added it (`pipeline.py`, extracted from
+`spikes_tr.shape[0]`) so `compute_energy.py`'s dense-equivalent comparison
+doesn't have to guess or hardcode it. **Not yet logged as a numbered
+barrier in the paper's `TODO.md`** — should be, next time that file is
+touched (candidate: B22, or folded into B8's existing entry since it's the
+same equation).
+
+### 12e. Cleanup decided alongside this
+
+User: archive (not delete) all pre-existing `Results_*` directories and
+loose scripts on Puhti before the next pull — including the *old*,
+untracked `compute_energy.py`, since the new tracked version would
+otherwise conflict with it on `git pull` (git won't silently overwrite an
+untracked file that collides with an incoming tracked one).

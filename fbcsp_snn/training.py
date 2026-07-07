@@ -19,7 +19,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import torch
@@ -247,6 +247,80 @@ def evaluate_model_with_events(
     accuracy = float((predictions == y_0idx).mean())
     mean_events_per_trial = total_events / n_trials
     return accuracy, predictions, mean_events_per_trial
+
+
+def evaluate_model_with_event_breakdown(
+    model: SNNClassifier,
+    spikes: torch.Tensor,
+    y_0idx: np.ndarray,
+    device: torch.device,
+    batch_size: int = 64,
+) -> Tuple[float, np.ndarray, Dict[str, float]]:
+    """Like :func:`evaluate_model_with_events`, but reports events *per layer*
+    instead of a single combined total.
+
+    A single combined total treats every spike as equally costly, but real
+    energy accumulates per-*synapse*: an input spike drives ``n_hidden``
+    downstream synapses via ``fc1``, a hidden spike drives ``n_output``
+    synapses via ``fc2``. Computing energy properly needs the input and
+    hidden counts separately so each can be weighted by its own layer's
+    fan-out — that's what this function is for (see
+    ``compute_energy.py``). Kept as a separate function rather than changing
+    :func:`evaluate_model_with_events`'s return signature, since that
+    function already has call sites elsewhere (``reliability.py``) relying
+    on its 3-tuple shape.
+
+    Parameters
+    ----------
+    model : SNNClassifier
+        Model to evaluate.  Must already be on *device*.
+    spikes : torch.Tensor
+        Input spike tensor ``(T, n_trials, n_features)``.
+    y_0idx : np.ndarray
+        True labels, shape ``(n_trials,)``.  **0-indexed.**
+    device : torch.device
+        Inference device.
+    batch_size : int
+        Number of trials per inference batch.
+
+    Returns
+    -------
+    accuracy : float
+        Fraction of correctly classified trials.
+    predictions : np.ndarray
+        Predicted class indices (0-indexed), shape ``(n_trials,)``.
+    events : Dict[str, float]
+        Mean events per trial, keyed ``"input"``, ``"hidden"``, ``"output"``,
+        and ``"total"`` (sum of the three — matches
+        :func:`evaluate_model_with_events`'s combined value exactly).
+    """
+    model.eval()
+    n_trials = spikes.shape[1]
+    all_preds: list[np.ndarray] = []
+    total_input = 0.0
+    total_hidden = 0.0
+    total_output = 0.0
+
+    with torch.no_grad():
+        for start in range(0, n_trials, batch_size):
+            batch = spikes[:, start : start + batch_size, :].to(device)
+            spk_out, _, spk_hidden = model(batch, return_hidden=True)
+            preds = model.decode(spk_out)
+            all_preds.append(preds.cpu().numpy())
+
+            total_input += batch.sum().item()
+            total_hidden += spk_hidden.sum().item()
+            total_output += spk_out.sum().item()
+
+    predictions = np.concatenate(all_preds)
+    accuracy = float((predictions == y_0idx).mean())
+    events = {
+        "input":  total_input / n_trials,
+        "hidden": total_hidden / n_trials,
+        "output": total_output / n_trials,
+        "total":  (total_input + total_hidden + total_output) / n_trials,
+    }
+    return accuracy, predictions, events
 
 
 # ---------------------------------------------------------------------------

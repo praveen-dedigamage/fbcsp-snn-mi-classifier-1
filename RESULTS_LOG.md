@@ -10,6 +10,58 @@ final and copied into the paper.
 
 ---
 
+## Energy computation — extended, not replaced (2026-07-08)
+
+Discovered mid-session that Puhti already had a real, working
+`compute_energy.py` + `run_lava_infer.py` (never git-tracked, so invisible
+to this repo) — considerably more developed than assumed: uses **real
+measured Lava SynOps** (not an assumption), has **real cited references**
+for an analog front-end (Qian 2017, Verhoeven 2007, Sharifshazileh 2021,
+Burr 2017), and a **real cited GPU/EEGNet-M4 comparison** (Burrello et al.
+2020, 4.28 mJ measured). Decision: extend it, don't replace it.
+
+**Important clarification from the user:** Loihi 2 is a **digital**,
+asynchronous, event-driven chip — not analog. The existing script's Gm-C/
+ADM/ReRAM front-end estimates describe a *separate*, more speculative
+hardware story (a hypothetical all-analog front-end that could pair with a
+digital Loihi backend), not a claim that Loihi itself is analog. Now stated
+explicitly in the script's docstring and print output so this doesn't get
+conflated later.
+
+**What got added:** a cross-check section using B15's `mean_input_events_
+per_trial`/`mean_hidden_events_per_trial` (this codebase's own PyTorch-side
+spike instrumentation) to compute an *independent* fan-out-weighted SynOps
+estimate, reported side-by-side against Lava's measured figure per subject.
+Rationale: Lava's number stays primary (it's the real target framework's
+own accounting for real, currently-deployable hardware — stronger than
+anything derived from PyTorch instrumentation alone), but if the two
+independent measurements roughly agree, that's corroborating evidence
+before either number is trusted in the paper; if they diverge, that's worth
+investigating first. Verified the cross-check's core arithmetic
+(`input_events × n_hidden + hidden_events × n_output`) and its graceful
+skip-on-missing-data behavior with mock `pipeline_params.json` fixtures
+before considering this done.
+
+**Status:** user ran `run_lava_infer.py` and has a `Results_lava/
+lava_summary.csv`, but hasn't validated whether the numbers are correct.
+Next step once training (step 1 in the run order) produces fresh
+`pipeline_params.json` files with the B15 event breakdown: run
+```bash
+python compute_energy.py --lava-dir Results_lava --results-dir Results_verify \
+    --subjects 1 2 3 4 5 6 7 8 9 --n-folds 5
+```
+and check the cross-check table for agreement before trusting either the
+Lava-measured or PyTorch-derived SynOps figure in the paper.
+
+**Also decided:** start fresh on Puhti — dozens of old `Results_*`
+directories and loose scripts (`run_butterworth_mc.py`, `run_e2e_stress.py`,
+`run_lava_infer.py`, `save_test_spikes.py`, `show_csp_quantized.py`, and the
+old untracked `compute_energy.py`) get archived (moved, not deleted) by the
+user before the next pull — the new tracked `compute_energy.py` would
+otherwise conflict with the untracked one of the same name on `git pull`.
+
+---
+
 ## Decided run order (2026-07-07)
 
 1. **Verification retrain — `Results_verify` (new dir, do NOT overwrite `Results/`).**

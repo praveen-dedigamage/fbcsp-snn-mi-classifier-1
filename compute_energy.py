@@ -5,6 +5,13 @@ multiplies mean synapse events per inference by Intel's published
 per-event energy figure for Loihi 2, and reports:
 
   1. SNN-only energy on Loihi 2  (directly derived from measured SynOps)
+  1b. Cross-check: an independent SynOps estimate derived from this
+      codebase's own PyTorch-side spike instrumentation (B15,
+      pipeline_params.json's mean_input_events_per_trial /
+      mean_hidden_events_per_trial), weighted by each layer's actual
+      fan-out. Reported side-by-side with (1) so a discrepancy between the
+      two independent measurements is visible before either number is
+      trusted, rather than only ever reporting one source.
   2. Full analog-neuromorphic pipeline energy  (SNN + cited analog front-end)
   3. Comparison to GPU / edge-CPU baselines
 
@@ -12,12 +19,28 @@ Usage
 -----
     python compute_energy.py [--lava-dir Results_lava] [--output-dir Results_energy]
 
+    # Also cross-check against this codebase's own measured spike counts
+    # (requires training to have been run with the current code, so
+    # pipeline_params.json has mean_input_events_per_trial/
+    # mean_hidden_events_per_trial -- see PIPELINE_REFERENCE.md sec 10/11):
+    python compute_energy.py --results-dir Results --subjects 1 2 3 4 5 6 7 8 9 \\
+        --n-folds 5
+
 Honesty note
 ------------
-Only the Loihi 2 SNN figure (item 1) is directly measured in this work.
-The analog front-end figures (items 2a–2c) are extrapolated from published
-silicon designs as per-stage silicon precedents.  They are reported as
-estimates with explicit references, NOT as measured results.
+Only the Loihi 2 SNN figure (item 1) is directly measured in this work --
+via Lava's own SynOps accounting for a real, currently-deployable digital
+neuromorphic chip. The cross-check (1b) is a second, independent
+measurement (different framework, same underlying network), included to
+validate item 1, not to replace it. The analog front-end figures (items
+2a-2c) are extrapolated from published silicon designs as per-stage
+precedents, NOT measured in this work, and describe a separate, more
+speculative hardware story: **Loihi 2 itself is a digital, asynchronous,
+event-driven chip, not an analog one** -- the Gm-C/ADM/ReRAM front-end
+below is a hypothetical fully-analog front-end that *could* be paired with
+a digital Loihi backend, not a claim that Loihi is analog. Keep these two
+stories (real digital Loihi backend vs. speculative analog front-end)
+distinct when interpreting the combined "full pipeline" totals.
 
 References
 ----------
@@ -26,7 +49,7 @@ References
     Published figure: 23.6 pJ/SynOp on Loihi 1 (Intel 14 nm).
 
 [2] Orchard et al., "Efficient neuromorphic signal processing with Loihi 2,"
-    IEEE SiPS, 2021.  Loihi 2 SynOp energy ~8–10 pJ (chip-level estimate).
+    IEEE SiPS, 2021.  Loihi 2 SynOp energy ~8-10 pJ (chip-level estimate).
 
 [3] Qian et al., "A Sub-1V 50nW 6th-Order Butterworth Gm-C Filter for
     EEG Applications," IEEE ISCAS, 2017.
@@ -35,14 +58,14 @@ References
 
 [4] Verhoeven et al., "Design of Gm-C Filters with Very Low Supply
     Voltages," IEEE Trans. Circuits Syst. I, 2007.
-    ~2 µW per biquad section (older technology, 0.35 µm CMOS).
+    ~2 uW per biquad section (older technology, 0.35 um CMOS).
     Used as the conservative Gm-C figure.
 
 [5] Sharifshazileh et al., "An Electronic Neuromorphic System for
     Real-Time Detection of High-Frequency Oscillations in iEEG,"
     Nature Commun., 2021.
-    ADM front-end power: 109 µW for 18-channel iEEG ASIC.
-    Scaled linearly to our 22-channel system: ~134 µW.
+    ADM front-end power: 109 uW for 18-channel iEEG ASIC.
+    Scaled linearly to our 22-channel system: ~134 uW.
 
 [6] Burr et al., "Neuromorphic computing and engineering in nano-scale
     crossbar hardware," MRS Bulletin, 2017.
@@ -50,45 +73,52 @@ References
 
 Energy model — SNN only
 -----------------------
-  E_loihi  = SynOps_per_inference × e_SynOp_J
+  E_loihi  = SynOps_per_inference x e_SynOp_J
   where e_SynOp = 23.6e-12 J  (conservative Loihi 1 [1])
               or  8.0e-12 J   (Loihi 2 estimate [2])
+
+Cross-check model (item 1b) — this codebase's own instrumentation
+--------------------------------------------------------------------
+  SynOps_pytorch = input_events_per_trial * n_hidden
+                   + hidden_events_per_trial * n_output
+  Each layer's measured spike count is weighted by that layer's own
+  fan-out (an input spike drives n_hidden downstream synapses via fc1, a
+  hidden spike drives n_output synapses via fc2) -- not lumped into one
+  uniform rate. Output-layer spikes are excluded: they terminate at the
+  population-vote readout and drive no further weight matrix.
 
 Energy model — full analog pipeline (4-second MI trial at 250 Hz)
 ------------------------------------------------------------------
   Stage 1  Gm-C filter bank
-           Config: 6 bands × 22 channels × 2 biquad sections = 264 Gm-C cells
-           Modern  [3]: 50 nW / complete 6th-order filter × 132 filters = 6.6 µW
-                        → 6.6 µW × 4 s = 26 µJ
-           Conservative [4]: 2 µW / biquad × 264 cells = 528 µW
-                        → 528 µW × 4 s = 2,112 µJ
+           Config: 6 bands x 22 channels x 2 biquad sections = 264 Gm-C cells
+           Modern  [3]: 50 nW / complete 6th-order filter x 132 filters = 6.6 uW
+                        -> 6.6 uW x 4 s = 26 uJ
+           Conservative [4]: 2 uW / biquad x 264 cells = 528 uW
+                        -> 528 uW x 4 s = 2,112 uJ
 
   Stage 2  ADM encoder
            Config: 22 EEG channels, each with one ADM comparator
-           [5]: 134 µW (scaled from 109 µW / 18 ch × 22 ch)
-                        → 134 µW × 4 s = 536 µJ
+           [5]: 134 uW (scaled from 109 uW / 18 ch x 22 ch)
+                        -> 134 uW x 4 s = 536 uJ
 
   Stage 3  CSP spatial filter (ReRAM crossbar)
-           Config: 1001 samples × (22 inputs → 144 outputs) = 3.17 M cell reads
-           [6]: 15 fJ/cell × 3.17 M = 47.6 µJ
+           Config: 1001 samples x (22 inputs -> 144 outputs) = 3.17 M cell reads
+           [6]: 15 fJ/cell x 3.17 M = 47.6 uJ
 
-  Stage 4  MIBIF comparator bank  (negligible, <1 µJ)
+  Stage 4  MIBIF comparator bank  (negligible, <1 uJ)
 
-  Stage 5  SNN on Loihi 2  (19.1 µJ, directly measured)
-
-  TOTAL (modern Gm-C):       ~629 µJ
-  TOTAL (conservative Gm-C): ~2,715 µJ
+  Stage 5  SNN on Loihi 2  (directly measured via Lava)
 
 GPU baseline (V100, inference only)
 ------------------------------------
   V100 TDP = 250 W; snnTorch batch=1 forward pass ~1 ms.
-  E_GPU_full = 250 W × 1e-3 s = 250 mJ.
-  E_GPU_30pct = 75 W × 1e-3 s = 75 mJ  (30% utilisation, more realistic).
+  E_GPU_full = 250 W x 1e-3 s = 250 mJ.
+  E_GPU_30pct = 75 W x 1e-3 s = 75 mJ  (30% utilisation, more realistic).
 
 Edge-CPU baseline (ARM Cortex-A72, ~3 W)
 -----------------------------------------
   FBCSP + SNN on CPU: digital filter + CSP + encode + SNN ~20 ms.
-  E_CPU = 3 W × 20e-3 s = 60 mJ.
+  E_CPU = 3 W x 20e-3 s = 60 mJ.
 
 EEGNet-on-M4 baseline (Burrello et al. 2020, classifier only)
 --------------------------------------------------------------
@@ -99,9 +129,10 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
 import logging
 from pathlib import Path
-from typing import List, Dict
+from typing import Dict, List, Optional
 
 import numpy as np
 
@@ -133,6 +164,8 @@ E_EEGNET_M4_J     = 4.28e-3
 # ---------------------------------------------------------------------------
 # Analog front-end energy constants (4-second MI trial)
 # All figures extrapolated from cited silicon — NOT measured in this work.
+# Describes a *separate*, speculative hardware story (a hypothetical
+# all-analog front-end) -- Loihi 2 itself is digital, see module docstring.
 # ---------------------------------------------------------------------------
 
 TRIAL_DURATION_S  = 4.0   # seconds (T=1001 at 250 Hz ≈ 4 s)
@@ -165,7 +198,7 @@ E_MIBIF_J          = 0.5e-6   # <1 µJ
 
 
 # ---------------------------------------------------------------------------
-# Load summary CSV
+# Load Lava summary CSV
 # ---------------------------------------------------------------------------
 
 def load_summary(lava_dir: Path) -> List[Dict]:
@@ -179,6 +212,109 @@ def load_summary(lava_dir: Path) -> List[Dict]:
             records.append({k: float(v) if k != "subject" else int(v)
                             for k, v in row.items()})
     return records
+
+
+# ---------------------------------------------------------------------------
+# Cross-check: this codebase's own PyTorch-side spike instrumentation (B15)
+# ---------------------------------------------------------------------------
+
+def load_pytorch_side_synops(
+    results_dir: Path,
+    subjects: List[int],
+    n_folds: int,
+) -> Dict[int, float]:
+    """Compute an independent, fan-out-weighted SynOps estimate per subject
+    from this codebase's own PyTorch-side spike counts (B15), averaged
+    across folds.
+
+    Uses ``mean_input_events_per_trial`` / ``mean_hidden_events_per_trial``
+    from each fold's ``pipeline_params.json`` -- these are measured
+    directly via ``evaluate_model_with_event_breakdown`` during training,
+    not assumed. Requires training to have been run with the current code
+    (folds trained before this instrumentation existed are silently
+    skipped with a logged warning, not silently zero-filled).
+
+    Parameters
+    ----------
+    results_dir : Path
+        Root results directory (e.g. ``Results``).
+    subjects : List[int]
+        Subject IDs to load.
+    n_folds : int
+        Number of folds per subject.
+
+    Returns
+    -------
+    Dict[int, float]
+        ``subject_id -> mean SynOps per trial across that subject's folds``.
+        Subjects with no usable folds are omitted.
+    """
+    per_subject: Dict[int, float] = {}
+    for subject_id in subjects:
+        fold_synops: List[float] = []
+        for fold in range(n_folds):
+            path = results_dir / f"Subject_{subject_id}" / f"fold_{fold}" / "pipeline_params.json"
+            if not path.exists():
+                continue
+            with open(path) as f:
+                params = json.load(f)
+            if "mean_input_events_per_trial" not in params or "mean_hidden_events_per_trial" not in params:
+                logger.warning(
+                    "Subject %d fold %d predates the per-layer event "
+                    "breakdown (B15) -- skipped from cross-check.",
+                    subject_id, fold,
+                )
+                continue
+            n_hidden = params["hidden_neurons"]
+            n_output = params["n_classes"] * params["population_per_class"]
+            synops = (
+                params["mean_input_events_per_trial"] * n_hidden
+                + params["mean_hidden_events_per_trial"] * n_output
+            )
+            fold_synops.append(synops)
+        if fold_synops:
+            per_subject[subject_id] = float(np.mean(fold_synops))
+    return per_subject
+
+
+def _print_cross_check(lava_rows: List[Dict], pytorch_synops: Dict[int, float]) -> None:
+    """Print Lava-measured vs. PyTorch-side SynOps, side by side, per subject.
+
+    A large disagreement here means the two independent measurements of
+    "how much does this network actually spike" don't agree -- worth
+    investigating before trusting either number in the paper.
+    """
+    if not pytorch_synops:
+        print("\n(No PyTorch-side cross-check data available -- pass "
+              "--results-dir/--subjects/--n-folds pointing at folds trained "
+              "with the current code to enable this.)\n")
+        return
+
+    print(f"\n{'='*72}")
+    print(f"  Cross-check: Lava-measured vs. PyTorch-side SynOps estimate")
+    print(f"  (independent measurements of the same underlying network --")
+    print(f"   large disagreement means something needs investigating)")
+    print(f"{'='*72}")
+    print(f"  {'Subj':<6}  {'Lava SynOps':>14}  {'PyTorch SynOps':>16}  {'Ratio':>8}")
+    print("  " + "-" * 52)
+
+    ratios: List[float] = []
+    for r in lava_rows:
+        subject_id = r["subject"]
+        lava_synops = r["synops_mean"]
+        pt_synops = pytorch_synops.get(subject_id)
+        if pt_synops is None:
+            print(f"  S{subject_id:<5}  {lava_synops:>14,.0f}  {'(no data)':>16}  {'--':>8}")
+            continue
+        ratio = pt_synops / lava_synops if lava_synops > 0 else float("nan")
+        ratios.append(ratio)
+        print(f"  S{subject_id:<5}  {lava_synops:>14,.0f}  {pt_synops:>16,.0f}  {ratio:>8.3f}")
+
+    if ratios:
+        print("  " + "-" * 52)
+        print(f"  Mean ratio (PyTorch / Lava): {np.mean(ratios):.3f}  "
+              f"(1.0 = perfect agreement)")
+    print(f"{'='*72}\n")
 
 
 # ---------------------------------------------------------------------------
@@ -221,9 +357,11 @@ def _print_frontend_breakdown(mean_snn_l2_uj: float, mean_snn_l1_uj: float) -> N
     e_cpu_uj       = E_CPU_J        * 1e6
 
     print(f"\n{'='*72}")
-    print(f"  Full Analog-Neuromorphic Pipeline Energy (4-second MI trial)")
-    print(f"  NOTE: Only Loihi 2 SNN is directly measured. All other stages")
-    print(f"  are extrapolated from cited silicon precedents.")
+    print(f"  Full Pipeline Energy (4-second MI trial)")
+    print(f"  NOTE: Only the Loihi 2 SNN stage is directly measured (digital")
+    print(f"  chip, via Lava). The front-end stages below describe a SEPARATE,")
+    print(f"  speculative all-analog front-end extrapolated from cited")
+    print(f"  silicon precedents -- Loihi 2 itself is not analog.")
     print(f"{'='*72}")
     print(f"  {'Stage':<35}  {'Modern':>9}  {'Conserv.':>10}  Reference")
     print(f"  {'':35}  {'(µJ)':>9}  {'(µJ)':>10}")
@@ -242,7 +380,7 @@ def _print_frontend_breakdown(mean_snn_l2_uj: float, mean_snn_l1_uj: float) -> N
         ("MIBIF comparator bank",
          e_mibif_uj,    e_mibif_uj,
          "negligible"),
-        ("SNN on Loihi 2  ← measured",
+        ("SNN on Loihi 2 (digital)  ← measured",
          mean_snn_l2_uj, mean_snn_l2_uj,
          "This work"),
     ]
@@ -358,6 +496,17 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--lava-dir",    default="Results_lava",
                    help="Directory containing lava_summary.csv")
     p.add_argument("--output-dir",  default="Results_energy")
+    p.add_argument("--results-dir", default=None,
+                   help="If set, also cross-check Lava's measured SynOps "
+                        "against this codebase's own PyTorch-side spike "
+                        "counts (B15) from this results directory (e.g. "
+                        "'Results'). Requires training to have been run "
+                        "with the current code.")
+    p.add_argument("--subjects", type=int, nargs="+", default=None,
+                   help="Subject IDs for the cross-check (required if "
+                        "--results-dir is set).")
+    p.add_argument("--n-folds", type=int, default=5,
+                   help="Folds per subject for the cross-check.")
     return p.parse_args()
 
 
@@ -372,6 +521,15 @@ def main() -> None:
 
     rows = compute_energy_table(records)
     _print_table(rows)
+
+    if args.results_dir is not None:
+        if args.subjects is None:
+            logger.error("--subjects is required when --results-dir is set")
+        else:
+            pytorch_synops = load_pytorch_side_synops(
+                Path(args.results_dir), args.subjects, args.n_folds
+            )
+            _print_cross_check(rows, pytorch_synops)
 
     mean_l2_uj = float(np.mean([r["energy_loihi2_uJ"] for r in rows]))
     mean_l1_uj = float(np.mean([r["energy_loihi1_uJ"] for r in rows]))
