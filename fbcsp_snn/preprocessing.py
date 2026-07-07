@@ -104,67 +104,6 @@ def bandpass_filter(
     return X_filt_2d.reshape(n_trials, n_channels, n_samples).astype(np.float32)
 
 
-def window_filter_bank(
-    X_bands: List[np.ndarray],
-    y: np.ndarray,
-    window_samples: int,
-    step_samples: int,
-) -> Tuple[List[np.ndarray], np.ndarray]:
-    """Slide overlapping windows over filter-bank output for augmented CSP fitting.
-
-    Used exclusively to augment the training set before CSP covariance
-    estimation.  Val and test data are never windowed — CSP spatial filters
-    are still applied to full-length trials downstream.
-
-    Parameters
-    ----------
-    X_bands : List[np.ndarray]
-        Per-band filtered EEG, each ``(n_trials, n_channels, n_samples)``.
-    y : np.ndarray
-        Class labels, shape ``(n_trials,)``.
-    window_samples : int
-        Window length in samples.
-    step_samples : int
-        Step between consecutive window starts in samples.
-
-    Returns
-    -------
-    List[np.ndarray]
-        Windowed data per band, each
-        ``(n_trials × n_windows_per_trial, n_channels, window_samples)``.
-    np.ndarray
-        Replicated labels, shape ``(n_trials × n_windows_per_trial,)``.
-    """
-    n_trials, _, n_samples = X_bands[0].shape
-    starts = list(range(0, n_samples - window_samples + 1, step_samples))
-
-    if not starts:
-        # Epoch shorter than one window (e.g. tmax=1 at 160 Hz gives 161 samples
-        # which is smaller than the default window size tuned for 250 Hz data).
-        # Fall back to using the full epoch as a single window per trial.
-        logger.warning(
-            "window_filter_bank: epoch length %d < window_samples %d — "
-            "skipping augmentation, returning full epochs unchanged.",
-            n_samples,
-            window_samples,
-        )
-        return X_bands, y
-
-    n_win = len(starts)
-    y_aug = np.repeat(y, n_win)
-
-    X_bands_aug: List[np.ndarray] = []
-    for X_band in X_bands:
-        # (n_trials, n_channels, n_samples) → (n_trials*n_win, n_channels, window_samples)
-        windows = np.stack(
-            [X_band[:, :, s:s + window_samples] for s in starts],
-            axis=1,                              # (n_trials, n_win, n_channels, window_samples)
-        ).reshape(n_trials * n_win, X_band.shape[1], window_samples)
-        X_bands_aug.append(windows)
-
-    return X_bands_aug, y_aug
-
-
 def apply_filter_bank(
     X: np.ndarray,
     bands: List[Tuple[float, float]],
@@ -239,6 +178,13 @@ class PairwiseCSP:
         per-class covariance matrices instead of the arithmetic mean.
         Avoids the SPD swelling effect and better represents the geometric
         centre of the covariance distribution on the manifold.
+    dual_end : bool
+        If ``True`` (default), take *m* eigenvectors from **both** ends of
+        the eigenspectrum (``2m`` filters per band/pair) — the paper's
+        dual-end design. If ``False``, take ``2m`` eigenvectors from the
+        largest-eigenvalue end only (standard single-end CSP, same total
+        filter count) — the ablation baseline for that design choice, holding
+        filter budget constant so only the eigenvector selection differs.
 
     Attributes
     ----------
@@ -261,12 +207,14 @@ class PairwiseCSP:
         euclidean_alignment: bool = True,
         riemannian_mean: bool = True,
         ledoit_wolf: bool = False,
+        dual_end: bool = True,
     ) -> None:
         self.m = m
         self.lambda_r = lambda_r
         self.euclidean_alignment = euclidean_alignment
         self.riemannian_mean = riemannian_mean
         self.ledoit_wolf = ledoit_wolf
+        self.dual_end = dual_end
         self.filters_: Dict[Tuple[int, _Pair], np.ndarray] = {}
         self.ea_whiteners_: Dict[int, np.ndarray] = {}
         self.pairs_: List[_Pair] = []
@@ -356,14 +304,14 @@ class PairwiseCSP:
                     else:
                         cov_a = covs_a.mean(axis=0)
                         cov_b = covs_b.mean(axis=0)
-                    W = _solve_csp(cov_a, cov_b, self.m)
+                    W = _solve_csp(cov_a, cov_b, self.m, dual_end=self.dual_end)
                 else:
                     _cov_fn = _riemannian_mean_cov if self.riemannian_mean else _mean_normalised_cov
                     cov_a = _cov_fn(X_band[y == c1])
                     cov_b = _cov_fn(X_band[y == c2])
                     cov_a = _regularise(cov_a, self.lambda_r)
                     cov_b = _regularise(cov_b, self.lambda_r)
-                    W = _solve_csp(cov_a, cov_b, self.m)
+                    W = _solve_csp(cov_a, cov_b, self.m, dual_end=self.dual_end)
                 self.filters_[(b_idx, pair)] = W
                 if pbar is not None:
                     pbar.update(1)
@@ -796,8 +744,9 @@ def _solve_csp(
     cov_a: np.ndarray,
     cov_b: np.ndarray,
     m: int,
+    dual_end: bool = True,
 ) -> np.ndarray:
-    """Solve the generalised eigenvalue problem and return dual-end filters.
+    """Solve the generalised eigenvalue problem and return spatial filters.
 
     Solves ``Σ_A W = λ (Σ_A + Σ_B) W`` using ``scipy.linalg.eigh``
     (symmetric solver, eigenvalues in ascending order).
@@ -809,15 +758,24 @@ def _solve_csp(
     cov_b : np.ndarray
         Regularised covariance for class B, shape ``(n_channels, n_channels)``.
     m : int
-        Number of filters from each end.
+        Number of filters from each end when ``dual_end=True``. The total
+        output width is always ``2m``, regardless of *dual_end*, so the
+        ablation changes only *which* eigenvectors are used, not how many —
+        isolating the dual-end design choice from filter budget.
+    dual_end : bool
+        If ``True`` (default), return ``2m`` filters: the first *m*
+        eigenvectors (low eigenvalue → maximise class-B variance)
+        concatenated with the last *m* eigenvectors (high eigenvalue →
+        maximise class-A variance). If ``False``, return the last ``2m``
+        eigenvectors (high-eigenvalue end only, standard single-end CSP) —
+        same total filter count as dual-end, the ablation baseline for the
+        dual-end design choice.
 
     Returns
     -------
     np.ndarray
-        Spatial filter matrix ``W``, shape ``(n_channels, 2 * m)``.
-        Columns ``0 … m-1`` are the first *m* eigenvectors (low eigenvalue →
-        maximise class-B variance); columns ``m … 2m-1`` are the last *m*
-        eigenvectors (high eigenvalue → maximise class-A variance).
+        Spatial filter matrix ``W``, shape ``(n_channels, 2*m)`` in both
+        modes — only the eigenvector *selection* differs.
     """
     composite = cov_a + cov_b
     n = composite.shape[0]
@@ -845,7 +803,9 @@ def _solve_csp(
         )
 
     _, W = eigh(cov_a, composite)
-    return np.concatenate([W[:, :m], W[:, -m:]], axis=1)
+    if dual_end:
+        return np.concatenate([W[:, :m], W[:, -m:]], axis=1)
+    return W[:, -(2 * m):]
 
 
 # ---------------------------------------------------------------------------

@@ -62,10 +62,8 @@ python main.py train \
     --subject-id "${SUBJECT_ID}" \
     --fold "${FOLD_ID}" \
     --n-folds 5 \
-    --adaptive-bands \
-    --n-adaptive-bands 12 \
+    --freq-bands "[(4,8),(8,14),(12,18),(16,24),(20,30),(26,40)]" \
     --csp-components-per-band 8 \
-    --min-fisher-fraction 0.15 \
     --hidden-neurons 64 \
     --population-per-class 20 \
     --beta 0.95 \

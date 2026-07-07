@@ -30,6 +30,15 @@ Target spike generation
 -----------------------
 :func:`make_target_spikes` samples Bernoulli spikes for the correct-class
 population at *spike_prob* per timestep and zero elsewhere.
+
+Cross-entropy ablation
+-----------------------
+:func:`cross_entropy_spike_loss` is an alternative to :func:`van_rossum_loss`
+for ablation studies: standard softmax cross-entropy on population-summed
+spike counts (the same reshape/sum readout used by
+``SNNClassifier.decode``), instead of a spike-timing-sensitive distance.
+Isolates whether the Van Rossum loss's timing sensitivity matters,
+independent of the SNN architecture and population-coded readout.
 """
 
 from __future__ import annotations
@@ -209,3 +218,49 @@ def make_target_spikes(
     # Sample Bernoulli independently at every timestep
     probs = (mask * spike_prob).unsqueeze(0).expand(T, -1, -1)  # (T, batch, n_output)
     return torch.bernoulli(probs)
+
+
+# ---------------------------------------------------------------------------
+# Cross-entropy ablation
+# ---------------------------------------------------------------------------
+
+def cross_entropy_spike_loss(
+    spk_out: torch.Tensor,
+    y: torch.Tensor,
+    n_classes: int,
+    population_per_class: int,
+) -> torch.Tensor:
+    """Cross-entropy loss on population-summed spike counts (ablation).
+
+    Alternative to :func:`van_rossum_loss` for ablation studies. Sums output
+    spikes over time and within each class population (the same readout
+    ``SNNClassifier.decode`` uses for prediction), then applies standard
+    softmax cross-entropy against the true class label — no target spike
+    trains are needed. Isolates whether the Van Rossum loss's spike-timing
+    sensitivity contributes to the pipeline's performance, independent of
+    the SNN architecture and population-coded readout, which are unchanged.
+
+    Parameters
+    ----------
+    spk_out : torch.Tensor
+        Model output spikes, shape ``(T, batch, n_output)`` where
+        ``n_output = n_classes * population_per_class``. Differentiable via
+        snnTorch's surrogate gradient.
+    y : torch.Tensor
+        Ground-truth class labels, shape ``(batch,)``, **0-indexed**, dtype
+        ``torch.long``.
+    n_classes : int
+        Number of motor imagery classes.
+    population_per_class : int
+        Output neurons per class population.
+
+    Returns
+    -------
+    torch.Tensor
+        Scalar cross-entropy loss.
+    """
+    batch = spk_out.shape[1]
+    spike_counts = spk_out.sum(dim=0)                                   # (batch, n_output)
+    spike_counts = spike_counts.view(batch, n_classes, population_per_class)
+    class_scores = spike_counts.sum(dim=-1)                             # (batch, n_classes)
+    return F.cross_entropy(class_scores, y)

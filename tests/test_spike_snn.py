@@ -26,7 +26,6 @@ import numpy as np
 import torch
 
 from fbcsp_snn import DEVICE, setup_logger
-from fbcsp_snn.band_selection import select_bands
 from fbcsp_snn.datasets import load_moabb
 from fbcsp_snn.encoding import encode_csp_projections
 from fbcsp_snn.losses import make_target_spikes, van_rossum_loss
@@ -74,13 +73,10 @@ logger.info("X_train: %s  y_train: %s", X_train.shape, y_train.shape)
 # ===========================================================================
 # 2. Band selection + filter bank + CSP  (train split only)
 # ===========================================================================
-sep("Step 2: Band selection -> filter bank -> PairwiseCSP")
+sep("Step 2: Filter bank -> PairwiseCSP")
 
-bands, _, _ = select_bands(
-    X_train, y_train, sfreq=SFREQ, n_bands=N_BANDS,
-    bandwidth=4.0, step=2.0, band_range=(4.0, 40.0),
-)
-logger.info("Selected bands: %s", bands)
+bands = [(4, 8), (8, 14), (12, 18), (16, 24), (20, 30), (26, 40)]
+logger.info("Bands: %s", bands)
 
 X_bands_train = apply_filter_bank(X_train, bands, sfreq=SFREQ, order=4)
 X_bands_test  = apply_filter_bank(X_test,  bands, sfreq=SFREQ, order=4)

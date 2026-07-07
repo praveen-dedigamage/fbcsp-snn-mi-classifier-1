@@ -31,7 +31,11 @@ except ImportError:
     from torch import autocast                   # type: ignore[assignment]
 
 from fbcsp_snn import DEVICE, setup_logger
-from fbcsp_snn.losses import make_target_spikes, van_rossum_loss
+from fbcsp_snn.losses import (
+    cross_entropy_spike_loss,
+    make_target_spikes,
+    van_rossum_loss,
+)
 from fbcsp_snn.model import SNNClassifier
 
 logger: logging.Logger = setup_logger(__name__)
@@ -177,6 +181,74 @@ def evaluate_model(
     return accuracy, predictions
 
 
+def evaluate_model_with_events(
+    model: SNNClassifier,
+    spikes: torch.Tensor,
+    y_0idx: np.ndarray,
+    device: torch.device,
+    batch_size: int = 64,
+) -> Tuple[float, np.ndarray, float]:
+    """Run inference, compute accuracy, and count total spike events per trial.
+
+    Extends :func:`evaluate_model` with end-to-end spike/event counting —
+    input-encoder spikes (the *spikes* argument itself) + hidden-layer
+    spikes (exposed via ``model(..., return_hidden=True)``) + output-layer
+    spikes, summed over all timesteps and neurons, averaged per trial (B15).
+
+    This is the real, measured firing-rate number that should back any
+    energy estimate. Previously no such measurement existed anywhere in the
+    codebase — the paper's energy equation substituted the input encoder's
+    firing rate for the whole network's activity because the hidden layer's
+    spikes were never exposed by ``SNNClassifier.forward()`` (fixed
+    alongside this function — see ``return_hidden`` in ``model.py``).
+
+    Parameters
+    ----------
+    model : SNNClassifier
+        Model to evaluate.  Must already be on *device*.
+    spikes : torch.Tensor
+        Input spike tensor ``(T, n_trials, n_features)``.
+    y_0idx : np.ndarray
+        True labels, shape ``(n_trials,)``.  **0-indexed.**
+    device : torch.device
+        Inference device.
+    batch_size : int
+        Number of trials per inference batch.
+
+    Returns
+    -------
+    accuracy : float
+        Fraction of correctly classified trials.
+    predictions : np.ndarray
+        Predicted class indices (0-indexed), shape ``(n_trials,)``.
+    mean_events_per_trial : float
+        Average total spike count (input + hidden + output layers, summed
+        over all timesteps and neurons) per single-trial classification.
+    """
+    model.eval()
+    n_trials = spikes.shape[1]
+    all_preds: list[np.ndarray] = []
+    total_events = 0.0
+
+    with torch.no_grad():
+        for start in range(0, n_trials, batch_size):
+            batch = spikes[:, start : start + batch_size, :].to(device)
+            spk_out, _, spk_hidden = model(batch, return_hidden=True)
+            preds = model.decode(spk_out)
+            all_preds.append(preds.cpu().numpy())
+
+            total_events += (
+                batch.sum().item()
+                + spk_hidden.sum().item()
+                + spk_out.sum().item()
+            )
+
+    predictions = np.concatenate(all_preds)
+    accuracy = float((predictions == y_0idx).mean())
+    mean_events_per_trial = total_events / n_trials
+    return accuracy, predictions, mean_events_per_trial
+
+
 # ---------------------------------------------------------------------------
 # Full fold training
 # ---------------------------------------------------------------------------
@@ -197,6 +269,7 @@ def train_fold(
     patience: int = 100,
     warmup: int = 100,
     tau_vr: float = 10.0,
+    loss_type: str = "van_rossum",
     batch_size: int = 32,
     max_time_steps: Optional[int] = None,
     device: Optional[torch.device] = None,
@@ -234,7 +307,12 @@ def train_fold(
     warmup : int
         Minimum epochs before early stopping activates.
     tau_vr : float
-        Van Rossum loss time constant (timesteps).
+        Van Rossum loss time constant (timesteps). Unused when
+        ``loss_type='cross_entropy'``.
+    loss_type : str
+        ``'van_rossum'`` (default) or ``'cross_entropy'`` (ablation: softmax
+        cross-entropy on population-summed spike counts, no target spike
+        trains needed — see :func:`fbcsp_snn.losses.cross_entropy_spike_loss`).
     batch_size : int
         Mini-batch size (number of trials per gradient step).
     max_time_steps : Optional[int]
@@ -291,15 +369,21 @@ def train_fold(
             batch_spikes = spikes_train[:, idx, :].to(device)   # (T, B, F)
             batch_y      = y_tensor[idx].long().to(device)       # (B,)
 
-            target = make_target_spikes(
-                batch_y, n_classes, population_per_class, T, spike_prob
-            ).to(device)
+            if loss_type != "cross_entropy":
+                target = make_target_spikes(
+                    batch_y, n_classes, population_per_class, T, spike_prob
+                ).to(device)
 
             optimizer.zero_grad()
 
             with autocast(device_type=device.type, enabled=use_amp):
                 spk_out, _ = model(batch_spikes)
-                loss = van_rossum_loss(spk_out, target, tau=tau_vr)
+                if loss_type == "cross_entropy":
+                    loss = cross_entropy_spike_loss(
+                        spk_out, batch_y, n_classes, population_per_class
+                    )
+                else:
+                    loss = van_rossum_loss(spk_out, target, tau=tau_vr)
 
             scaler.scale(loss).backward()
             scaler.step(optimizer)

@@ -13,10 +13,10 @@ multiplies, comparators, leaky integrators).
 ```
 Raw EEG (n_trials, n_channels, n_samples)
   │
-  ├─ Per-fold adaptive band selection (Fisher ERD/ERS on training data)
-  │    → selects K best frequency bands from dense candidates (4–40 Hz)
+  ├─ Fixed six-band overlapping filter bank (4–8, 8–14, 12–18, 16–24, 20–30, 26–40 Hz)
   │
-  ├─ Bandpass filter bank (Butterworth, zero-phase)
+  ├─ Bandpass filter bank (Butterworth, causal single forward-pass — sosfilt,
+  │    not filtfilt — so it maps to a real-time analog Gm-C circuit)
   │    → (n_trials, n_channels × n_bands, n_samples)
   │
   ├─ Pairwise CSP (dual-end: m filters from each eigenspectrum extreme per class pair)

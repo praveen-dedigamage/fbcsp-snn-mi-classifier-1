@@ -20,6 +20,10 @@ Usage
     # Aggregate results after all folds complete
     python main.py aggregate --source moabb --moabb-dataset BNCI2014_001 --subject-id 1 \\
         --n-folds 10
+
+    # Reliability / hardware-noise sweep on a saved fold (B15, no retraining)
+    python main.py reliability --source moabb --moabb-dataset BNCI2014_001 \\
+        --subject-id 1 --fold 0 --reliability-n-repeats 20
 """
 
 from __future__ import annotations
@@ -53,6 +57,10 @@ def main() -> None:
     elif cfg.mode == "aggregate":
         from fbcsp_snn.pipeline import run_aggregate
         run_aggregate(cfg)
+
+    elif cfg.mode == "reliability":
+        from fbcsp_snn.reliability import run_reliability
+        run_reliability(cfg)
 
     else:
         logger.error("Unknown mode: %s", cfg.mode)

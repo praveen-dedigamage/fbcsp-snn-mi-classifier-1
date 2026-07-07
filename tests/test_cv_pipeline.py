@@ -29,7 +29,6 @@ import torch
 from sklearn.model_selection import StratifiedKFold
 
 from fbcsp_snn import DEVICE, setup_logger
-from fbcsp_snn.band_selection import select_bands
 from fbcsp_snn.datasets import load_moabb
 from fbcsp_snn.encoding import encode_tensor
 from fbcsp_snn.evaluation import (
@@ -117,11 +116,8 @@ for fold_idx, (tr_idx, val_idx) in enumerate(skf.split(X_train, y_train)):
     y_f_tr_0  = y_f_tr  - 1
     y_f_val_0 = y_f_val - 1
 
-    # ---- 2a. Band selection (training split only) ----
-    bands, _, _ = select_bands(
-        X_f_tr, y_f_tr, sfreq=SFREQ, n_bands=N_BANDS,
-        bandwidth=4.0, step=2.0, band_range=(4.0, 40.0),
-    )
+    # ---- 2a. Fixed frequency bands ----
+    bands = [(4, 8), (8, 14), (12, 18), (16, 24), (20, 30), (26, 40)]
     logger.info("Bands: %s", bands)
 
     # ---- 2b. Filter bank ----

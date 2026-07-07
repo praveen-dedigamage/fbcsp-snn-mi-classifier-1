@@ -95,9 +95,7 @@ python main.py train \
     --subject-id "${SUBJECT_ID}" \
     --fold "${FOLD_IDX}" \
     --n-folds "${N_FOLDS}" \
-    --adaptive-bands \
-    --n-adaptive-bands 12 \
-    --min-fisher-fraction 0.15 \
+    --freq-bands "[(4,8),(8,14),(12,18),(16,24),(20,30),(26,40)]" \
     --csp-components-per-band 8 \
     --hidden-neurons 64 \
     --population-per-class 20 \

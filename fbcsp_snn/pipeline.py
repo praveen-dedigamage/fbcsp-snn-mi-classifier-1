@@ -15,7 +15,6 @@ Artifact layout per fold
         znorm.pkl               — ZNormaliser instance (pickle)
         mibif.pkl               — MIBIFSelector instance (pickle)
         pipeline_params.json    — bands, metrics, hyperparams (per fold)
-        band_selection.png      — Fisher curve + selected bands
         spike_propagation.png   — spike raster for 4 training trials
         neuron_traces.png       — output LIF membrane + spike overlay
         weight_histograms.png   — FP32 vs INT8-sim weight distributions
@@ -40,7 +39,6 @@ import torch
 from sklearn.model_selection import StratifiedKFold, StratifiedShuffleSplit
 
 from fbcsp_snn import DEVICE, setup_logger
-from fbcsp_snn.band_selection import select_bands
 from fbcsp_snn.baseline import extract_logvar, run_baseline_classifiers
 from fbcsp_snn.config import Config
 from fbcsp_snn.datasets import DATASET_REGISTRY, get_n_classes, load_moabb
@@ -49,11 +47,10 @@ from fbcsp_snn.encoding import encode_tensor
 from fbcsp_snn.evaluation import compute_accuracy, compute_confusion_matrix
 from fbcsp_snn.mibif import MIBIFSelector
 from fbcsp_snn.model import SNNClassifier, maybe_compile
-from fbcsp_snn.preprocessing import PairwiseCSP, ZNormaliser, apply_filter_bank, window_filter_bank
+from fbcsp_snn.preprocessing import PairwiseCSP, ZNormaliser, apply_filter_bank
 from fbcsp_snn.quantization import quantize_csp_filters, quantize_model, quantization_report
-from fbcsp_snn.training import evaluate_model, train_fold
+from fbcsp_snn.training import evaluate_model, evaluate_model_with_events, train_fold
 from fbcsp_snn.visualization import (
-    plot_band_selection,
     plot_confusion_matrix,
     plot_neuron_traces,
     plot_spike_propagation,
@@ -175,28 +172,9 @@ def _run_single_fold(
 
     m = cfg.csp_components_per_band // 2   # filters per end
 
-    # ---- Band selection ----
-    if cfg.adaptive_bands:
-        bands, fisher_freqs, fisher_curve = select_bands(
-            X_f_tr, y_f_tr, sfreq=sfreq,
-            n_bands=cfg.n_adaptive_bands,
-            bandwidth=cfg.bandwidth,
-            step=cfg.band_step,
-            band_range=cfg.band_range,
-            min_fisher_fraction=cfg.min_fisher_fraction,
-        )
-    else:
-        bands = cfg.freq_bands
-        fisher_freqs = np.array([0.0])
-        fisher_curve = np.array([0.0])
-
+    # ---- Frequency bands ----
+    bands = cfg.freq_bands
     logger.info("Fold %d  bands: %s", fold_idx, bands)
-
-    plot_band_selection(
-        fisher_freqs, fisher_curve, bands,
-        save_path=fold_dir / "band_selection.png",
-        title=f"Subject {cfg.subject_id} Fold {fold_idx} — Band Selection",
-    )
 
     # ---- Filter bank ----
     X_bands_tr  = apply_filter_bank(X_f_tr,  bands, sfreq, order=4, filter_type=cfg.filter_type)
@@ -219,31 +197,14 @@ def _run_single_fold(
             crop_s[0], crop_s[1], c1 - c0, sfreq,
         )
 
-    # ---- Sliding-window augmentation (CSP fitting only) ----
-    # Windows the filtered training bands to increase covariance sample count.
-    # Val and test are never touched; CSP spatial filters are applied to
-    # full-length trials after fitting.
-    if cfg.augment_windows:
-        win_samples  = int(cfg.window_duration * sfreq)
-        step_samples = int(cfg.window_step * sfreq)
-        X_bands_csp, y_csp = window_filter_bank(
-            X_bands_tr, y_f_tr, win_samples, step_samples
-        )
-        n_win = len(y_csp) // len(y_f_tr)
-        logger.info(
-            "Window augmentation: %d trials × %d windows = %d samples "
-            "(window=%.1fs step=%.1fs)",
-            len(y_f_tr), n_win, len(y_csp),
-            cfg.window_duration, cfg.window_step,
-        )
-    else:
-        X_bands_csp, y_csp = X_bands_tr, y_f_tr
+    X_bands_csp, y_csp = X_bands_tr, y_f_tr
 
     # ---- Pairwise CSP ----
     csp = PairwiseCSP(m=m, lambda_r=cfg.lambda_r,
                       euclidean_alignment=cfg.euclidean_alignment,
                       riemannian_mean=cfg.riemannian_mean,
-                      ledoit_wolf=cfg.csp_ledoit_wolf)
+                      ledoit_wolf=cfg.csp_ledoit_wolf,
+                      dual_end=cfg.csp_dual_end)
     csp.fit(X_bands_csp, y_csp)
 
     proj_tr  = csp.transform(X_bands_tr)
@@ -325,16 +286,22 @@ def _run_single_fold(
         epochs=cfg.epochs,
         patience=cfg.early_stopping_patience,
         warmup=cfg.early_stopping_warmup,
-        tau_vr=10.0,
-        batch_size=64,
+        tau_vr=cfg.tau_vr,
+        loss_type=cfg.loss_type,
+        batch_size=cfg.train_batch_size,
         device=DEVICE,
         fold_dir=fold_dir,
         log_every=max(1, cfg.epochs // 20),
     )
 
     # ---- FP32 evaluate ----
+    # Test-set evaluation also counts total spike events (input + hidden +
+    # output layers) per trial (B15) — the measured firing rate that should
+    # back any energy estimate, replacing the previous unmeasured proxy.
     val_acc_fp32,  val_preds_fp32  = evaluate_model(model, spikes_val, y_f_val_0,  DEVICE)
-    test_acc_fp32, test_preds_fp32 = evaluate_model(model, spikes_te,  y_test_0,   DEVICE)
+    test_acc_fp32, test_preds_fp32, mean_events_per_trial = evaluate_model_with_events(
+        model, spikes_te, y_test_0, DEVICE
+    )
 
     # ---- INT8 simulate + evaluate ----
     model_int8 = quantize_model(model, bits=8)
@@ -349,6 +316,7 @@ def _run_single_fold(
     # Runs on the already-fitted znorm and mibif to ensure no data leakage.
     saved_csp_filters = csp.filters_
     ptq_accs: dict = {}
+    joint_ptq_accs: dict = {}   # (csp_bits, snn_bits) -> test accuracy
     for bits in [8, 6, 4]:
         csp.filters_ = quantize_csp_filters(saved_csp_filters, bits=bits)
         proj_te_q    = csp.transform(X_bands_te)
@@ -363,6 +331,21 @@ def _run_single_fold(
             "Fold %d  CSP %d-bit PTQ  test: %.1f%%",
             fold_idx, bits, acc_q * 100,
         )
+
+        # ---- Joint CSP+SNN PTQ sweep (B15 Tier A) -------------------------
+        # A real chip has both stages lossy simultaneously — quantizing only
+        # one at a time (as above) doesn't represent the actual deployment
+        # scenario. Reuses the CSP-quantized spikes already computed for
+        # this csp_bits value; only the SNN needs re-quantizing per
+        # (csp_bits, snn_bits) pair.
+        for snn_bits in [8, 6, 4]:
+            model_joint_q = quantize_model(model, bits=snn_bits)
+            acc_joint, _ = evaluate_model(model_joint_q, spikes_q, y_test_0, DEVICE)
+            joint_ptq_accs[(bits, snn_bits)] = acc_joint
+            logger.info(
+                "Fold %d  Joint PTQ  CSP=%d-bit SNN=%d-bit  test: %.1f%%",
+                fold_idx, bits, snn_bits, acc_joint * 100,
+            )
     csp.filters_ = saved_csp_filters  # restore FP32 filters before pickling
 
     # ---- Neuron traces (one test-set batch) ----
@@ -415,16 +398,20 @@ def _run_single_fold(
         "n_classes":          n_classes,
         "n_input_features":   n_input,
         "bands":              [[float(lo), float(hi)] for lo, hi in bands],
-        "adaptive_bands":     cfg.adaptive_bands,
         "filter_type":        cfg.filter_type,
         "encoder_type":       cfg.encoder_type,
         "euclidean_alignment": cfg.euclidean_alignment,
         "riemannian_mean":    cfg.riemannian_mean,
+        "csp_dual_end":       cfg.csp_dual_end,
+        "csp_ledoit_wolf":    cfg.csp_ledoit_wolf,
         "csp_m":              m,
         "lambda_r":           cfg.lambda_r,
         "hidden_neurons":     cfg.hidden_neurons,
         "population_per_class": cfg.population_per_class,
         "beta":               cfg.beta,
+        "loss_type":          cfg.loss_type,
+        "tau_vr":             cfg.tau_vr,
+        "train_batch_size":   cfg.train_batch_size,
         "feature_method":     cfg.feature_selection_method,
         "feature_percentile": cfg.feature_percentile,
         "mi_fraction":        cfg.mi_fraction,
@@ -436,15 +423,30 @@ def _run_single_fold(
         "val_acc_int8":       round(val_acc_int8, 6),
         "test_acc_fp32":      round(test_acc_fp32, 6),
         "test_acc_int8":      round(test_acc_int8, 6),
+        # Measured end-to-end spike events per trial (B15) — replaces the
+        # unmeasured "0.15 spikes/neuron/timestep" proxy previously used in
+        # the paper's energy estimate (that number was actually the input
+        # encoder's rate, not a whole-network measurement).
+        "mean_events_per_trial": round(mean_events_per_trial, 3),
         # PTQ CSP — analog crossbar precision sweep (FP32 SNN, quantized CSP only)
         "test_acc_csp_8bit":  round(ptq_accs[8], 6),
         "test_acc_csp_6bit":  round(ptq_accs[6], 6),
         "test_acc_csp_4bit":  round(ptq_accs[4], 6),
+        # Joint CSP+SNN PTQ sweep (B15 Tier A) — both stages quantised
+        # simultaneously, the actual deployment scenario on a real chip.
+        # Flat keys (not a nested dict) so run_aggregate()'s CSV writer and
+        # analyze_results.py's flat-field convention both pick these up.
+        **{
+            f"test_acc_joint_csp{c}_snn{s}": round(joint_ptq_accs[(c, s)], 6)
+            for c in (8, 6, 4) for s in (8, 6, 4)
+        },
         # Classical baselines (log-var features, same z-norm, no spike encoding)
         "val_acc_lda":        round(baseline_results["val_acc_lda"],  6),
         "test_acc_lda":       round(baseline_results["test_acc_lda"], 6),
         "val_acc_svm":        round(baseline_results["val_acc_svm"],  6),
         "test_acc_svm":       round(baseline_results["test_acc_svm"], 6),
+        "svm_best_c":         baseline_results["svm_best_c"],
+        "svm_best_gamma":     baseline_results["svm_best_gamma"],
     }
     with open(fold_dir / "pipeline_params.json", "w") as f:
         json.dump(params, f, indent=2)
@@ -726,11 +728,15 @@ def run_aggregate(cfg: Config) -> None:
 
     # ---- Summary CSV ----
     csv_path = subject_dir / "summary.csv"
+    joint_fieldnames = [
+        f"test_acc_joint_csp{c}_snn{s}" for c in (8, 6, 4) for s in (8, 6, 4)
+    ]
     fieldnames = [
         "fold", "best_val_acc_fp32", "best_epoch", "stopped_epoch",
         "val_acc_fp32", "val_acc_int8",
-        "test_acc_fp32", "test_acc_int8",
+        "test_acc_fp32", "test_acc_int8", "mean_events_per_trial",
         "test_acc_csp_8bit", "test_acc_csp_6bit", "test_acc_csp_4bit",
+        *joint_fieldnames,
         "val_acc_lda", "test_acc_lda", "val_acc_svm", "test_acc_svm",
     ]
     with open(csv_path, "w", newline="") as f:
@@ -752,9 +758,14 @@ def run_aggregate(cfg: Config) -> None:
         "val_acc_int8":        round(float(np.mean(_col("val_acc_int8"))),  6),
         "test_acc_fp32":       round(float(np.mean(_col("test_acc_fp32"))), 6),
         "test_acc_int8":       round(float(np.mean(_col("test_acc_int8"))), 6),
+        "mean_events_per_trial": round(float(np.mean(_col("mean_events_per_trial"))), 3) if _col("mean_events_per_trial") else "",
         "test_acc_csp_8bit":   round(float(np.mean(_col("test_acc_csp_8bit"))), 6) if _col("test_acc_csp_8bit") else "",
         "test_acc_csp_6bit":   round(float(np.mean(_col("test_acc_csp_6bit"))), 6) if _col("test_acc_csp_6bit") else "",
         "test_acc_csp_4bit":   round(float(np.mean(_col("test_acc_csp_4bit"))), 6) if _col("test_acc_csp_4bit") else "",
+        **{
+            key: (round(float(np.mean(_col(key))), 6) if _col(key) else "")
+            for key in joint_fieldnames
+        },
         "val_acc_lda":         round(float(np.mean(_col("val_acc_lda"))),   6) if _col("val_acc_lda")  else "",
         "test_acc_lda":        round(float(np.mean(_col("test_acc_lda"))),  6) if _col("test_acc_lda") else "",
         "val_acc_svm":         round(float(np.mean(_col("val_acc_svm"))),   6) if _col("val_acc_svm")  else "",

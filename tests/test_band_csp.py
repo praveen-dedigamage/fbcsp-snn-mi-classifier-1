@@ -19,7 +19,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import numpy as np
 
 from fbcsp_snn import setup_logger
-from fbcsp_snn.band_selection import select_bands
 from fbcsp_snn.datasets import load_moabb
 from fbcsp_snn.preprocessing import PairwiseCSP, apply_filter_bank
 
@@ -66,23 +65,15 @@ assert set(np.unique(y_train).tolist()) == set(range(1, N_CLASSES + 1)), \
 
 
 # ---------------------------------------------------------------------------
-# Step 2 — Adaptive band selection (fit on training data only)
+# Step 2 — Fixed six-band overlapping filter bank
 # ---------------------------------------------------------------------------
-_section("Step 2: Adaptive band selection")
+_section("Step 2: Fixed frequency bands")
 
-selected_bands, fisher_freqs, fisher_curve = select_bands(
-    X_train, y_train, sfreq=SFREQ, n_bands=N_BANDS,
-    bandwidth=4.0, step=2.0, band_range=(4.0, 40.0),
-)
+selected_bands = [(4, 8), (8, 14), (12, 18), (16, 24), (20, 30), (26, 40)]
 
-logger.info("Fisher curve : freqs %s  values %s", fisher_freqs.shape, fisher_curve.shape)
-logger.info("Selected bands (%d):", len(selected_bands))
+logger.info("Using %d fixed overlapping bands:", len(selected_bands))
 for i, (lo, hi) in enumerate(selected_bands):
-    idx = np.argmax(fisher_curve)
-    band_mask = (fisher_freqs >= lo) & (fisher_freqs <= hi)
-    band_score = fisher_curve[band_mask].sum()
-    logger.info("  Band %d: %.1f–%.1f Hz  (integrated Fisher score = %.4f)",
-                i, lo, hi, band_score)
+    logger.info("  Band %d: %.1f–%.1f Hz", i, lo, hi)
 
 assert len(selected_bands) == N_BANDS, \
     f"Expected {N_BANDS} bands, got {len(selected_bands)}"

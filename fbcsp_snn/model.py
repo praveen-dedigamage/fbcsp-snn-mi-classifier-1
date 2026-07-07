@@ -26,7 +26,7 @@ compiling the model use ``mode="default"`` only.
 from __future__ import annotations
 
 import logging
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
@@ -108,13 +108,22 @@ class SNNClassifier(nn.Module):
     def forward(
         self,
         x: torch.Tensor,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        return_hidden: bool = False,
+    ) -> Union[
+        Tuple[torch.Tensor, torch.Tensor],
+        Tuple[torch.Tensor, torch.Tensor, torch.Tensor],
+    ]:
         """Run SNN simulation over all timesteps.
 
         Parameters
         ----------
         x : torch.Tensor
             Input spike tensor, shape ``(T, batch, n_input)``.
+        return_hidden : bool
+            If ``True``, also return the hidden-layer spike train (needed
+            for event/spike counting — B15). Default ``False`` preserves the
+            original 2-tuple return so every existing caller (training loop,
+            ``evaluate_model``, tests) is unaffected.
 
         Returns
         -------
@@ -122,6 +131,9 @@ class SNNClassifier(nn.Module):
             Output spike trains, shape ``(T, batch, n_output)``.
         mem_out : torch.Tensor
             Output membrane potential traces, shape ``(T, batch, n_output)``.
+        spk_hidden : torch.Tensor
+            Only returned when ``return_hidden=True``. Hidden-layer spike
+            trains, shape ``(T, batch, n_hidden)``.
         """
         T = x.shape[0]
         mem1 = self.lif1.init_leaky()
@@ -129,6 +141,7 @@ class SNNClassifier(nn.Module):
 
         spk_out_list: list[torch.Tensor] = []
         mem_out_list: list[torch.Tensor] = []
+        spk_hidden_list: list[torch.Tensor] = []
 
         for t in range(T):
             # Layer 1
@@ -140,9 +153,14 @@ class SNNClassifier(nn.Module):
 
             spk_out_list.append(spk2)
             mem_out_list.append(mem2)
+            if return_hidden:
+                spk_hidden_list.append(spk1)
 
         spk_out = torch.stack(spk_out_list, dim=0)   # (T, batch, n_output)
         mem_out = torch.stack(mem_out_list, dim=0)   # (T, batch, n_output)
+        if return_hidden:
+            spk_hidden = torch.stack(spk_hidden_list, dim=0)   # (T, batch, n_hidden)
+            return spk_out, mem_out, spk_hidden
         return spk_out, mem_out
 
     # ------------------------------------------------------------------

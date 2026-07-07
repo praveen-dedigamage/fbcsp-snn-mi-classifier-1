@@ -27,12 +27,8 @@ class Config:
         Single fold to run (``None`` → run all folds).
     n_folds : int
         Number of CV folds.
-    adaptive_bands : bool
-        Use adaptive frequency band selection.
-    n_adaptive_bands : int
-        Number of bands to select adaptively.
     freq_bands : List[Tuple[float, float]]
-        Static frequency bands (used when ``adaptive_bands=False``).
+        Six overlapping frequency bands for the filter bank.
     bandwidth : float
         Candidate band width in Hz.
     band_step : float
@@ -40,7 +36,8 @@ class Config:
     band_range : Tuple[float, float]
         Frequency range for candidate bands.
     csp_components_per_band : int
-        Total CSP filters per band (half from each end).
+        Total CSP filters per band (half from each end when
+        ``csp_dual_end=True``; all from one end when ``False``).
     lambda_r : float
         CSP covariance regularisation.
     base_thresh : float
@@ -89,16 +86,10 @@ class Config:
     n_folds: int = 10
     val_fraction: float = 0.2
 
-    # Band selection
-    adaptive_bands: bool = True
-    n_adaptive_bands: int = 12
+    # Band selection — fixed 6-band overlapping filter bank
     freq_bands: List[Tuple[float, float]] = field(
-        default_factory=lambda: [(4, 8), (8, 14), (14, 30)]
+        default_factory=lambda: [(4, 8), (8, 14), (12, 18), (16, 24), (20, 30), (26, 40)]
     )
-    bandwidth: float = 4.0
-    band_step: float = 2.0
-    band_range: Tuple[float, float] = (4.0, 40.0)
-    min_fisher_fraction: float = 0.15
     filter_type: str = "butterworth"   # 'butterworth' or 'bessel'
 
     # CSP
@@ -107,14 +98,10 @@ class Config:
     euclidean_alignment: bool = True
     riemannian_mean: bool = True
     csp_ledoit_wolf: bool = False
-
-    # Data augmentation (CSP fitting only)
-    augment_windows: bool = False
-    window_duration: float = 2.0   # seconds
-    window_step: float = 0.5       # seconds → 75 % overlap at 250 Hz
+    csp_dual_end: bool = True   # ablation: False = single-end (standard) CSP
 
     # Encoding
-    encoder_type: str = "delta"   # 'delta' or 'adm'
+    encoder_type: str = "delta"   # 'delta', 'adm', or 'fixed' (ablation)
     base_thresh: float = 0.001
     adapt_inc: float = 0.6
     decay: float = 0.95
@@ -132,6 +119,9 @@ class Config:
     early_stopping_patience: int = 100
     early_stopping_warmup: int = 100
     spiking_prob: float = 0.7
+    loss_type: str = "van_rossum"   # 'van_rossum' or 'cross_entropy' (ablation)
+    tau_vr: float = 10.0
+    train_batch_size: int = 64
 
     # Feature selection
     feature_selection_method: str = "mibif"
@@ -141,6 +131,15 @@ class Config:
     # I/O
     results_dir: str = "Results"
     n_classes: Optional[int] = None
+
+    # Inference-only: post-training CSP weight quantisation (PTQ)
+    csp_bits: Optional[int] = None
+
+    # Reliability-only: Monte Carlo noise-robustness sweep (B15)
+    reliability_severities: List[float] = field(
+        default_factory=lambda: [0.0, 0.05, 0.1, 0.2, 0.3]
+    )
+    reliability_n_repeats: int = 20
 
 
 # ---------------------------------------------------------------------------
@@ -159,6 +158,13 @@ def _parse_band_range(value: str) -> Tuple[float, float]:
     import ast
     lo, hi = ast.literal_eval(value)
     return (float(lo), float(hi))
+
+
+def _parse_severities(value: str) -> List[float]:
+    """Parse a string like ``"[0.0,0.05,0.1,0.2,0.3]"`` into a list of floats."""
+    import ast
+    parsed = ast.literal_eval(value)
+    return [float(v) for v in parsed]
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -185,19 +191,10 @@ def build_parser() -> argparse.ArgumentParser:
                          help="Validation fraction per fold (default 0.2 = 80/20 split).")
     train_p.add_argument("--fold", type=int, default=None,
                          help="Run only this fold (0-indexed).")
-    train_p.add_argument("--adaptive-bands", action="store_true", default=True)
-    train_p.add_argument("--no-adaptive-bands", dest="adaptive_bands",
-                         action="store_false")
-    train_p.add_argument("--n-adaptive-bands", type=int, default=6)
     train_p.add_argument("--freq-bands", type=_parse_freq_bands,
-                         default=[(4, 8), (8, 14), (14, 30)])
-    train_p.add_argument("--band-range", type=_parse_band_range,
-                         default=(4.0, 40.0),
-                         help="Candidate band search range, e.g. '(4.0,30.0)'")
-    train_p.add_argument("--min-fisher-fraction", type=float, default=0.05,
-                         help="Min Fisher score as fraction of top band score (default 0.05).")
-    train_p.add_argument("--bandwidth", type=float, default=4.0)
-    train_p.add_argument("--band-step", type=float, default=2.0)
+                         default=[(4, 8), (8, 14), (12, 18), (16, 24), (20, 30), (26, 40)],
+                         help="Six overlapping frequency bands in Hz, "
+                              "e.g. '[(4,8),(8,14),(12,18),(16,24),(20,30),(26,40)]'")
     train_p.add_argument("--filter-type", type=str, default="butterworth",
                          choices=["butterworth", "bessel"],
                          help="Causal bandpass filter type (default: butterworth).")
@@ -213,19 +210,20 @@ def build_parser() -> argparse.ArgumentParser:
                          action="store_true", default=False,
                          help="Use Ledoit-Wolf shrinkage for CSP covariance "
                               "estimation instead of fixed Tikhonov regularisation.")
-    train_p.add_argument("--augment-windows", dest="augment_windows",
-                         action="store_true", default=False,
-                         help="Augment CSP covariance fitting with overlapping "
-                              "sliding windows (val/test unaffected).")
-    train_p.add_argument("--window-duration", type=float, default=2.0,
-                         help="Sliding window length in seconds (default 2.0).")
-    train_p.add_argument("--window-step", type=float, default=0.5,
-                         help="Sliding window step in seconds (default 0.5 → "
-                              "75%% overlap at 250 Hz).")
+    train_p.add_argument("--csp-dual-end", dest="csp_dual_end",
+                         action="store_true", default=True,
+                         help="Take m eigenvectors from both ends of the CSP "
+                              "eigenspectrum (default, 2m filters/band/pair).")
+    train_p.add_argument("--csp-single-end", dest="csp_dual_end",
+                         action="store_false",
+                         help="Ablation: take m eigenvectors from the "
+                              "largest-eigenvalue end only (standard "
+                              "single-end CSP, m filters/band/pair).")
     train_p.add_argument("--encoder-type", type=str, default="delta",
-                         choices=["delta", "adm"],
-                         help="Spike encoder: 'delta' (adaptive threshold, default) or "
-                              "'adm' (ON/OFF polarity; doubles feature dimension).")
+                         choices=["delta", "adm", "fixed"],
+                         help="Spike encoder: 'delta' (adaptive threshold, default), "
+                              "'adm' (ON/OFF polarity; doubles feature dimension), or "
+                              "'fixed' (ablation: constant threshold, no adaptation).")
     train_p.add_argument("--base-thresh", type=float, default=0.001)
     train_p.add_argument("--adapt-inc", type=float, default=0.6)
     train_p.add_argument("--decay", type=float, default=0.95)
@@ -239,6 +237,16 @@ def build_parser() -> argparse.ArgumentParser:
     train_p.add_argument("--early-stopping-patience", type=int, default=100)
     train_p.add_argument("--early-stopping-warmup", type=int, default=100)
     train_p.add_argument("--spiking-prob", type=float, default=0.7)
+    train_p.add_argument("--loss-type", type=str, default="van_rossum",
+                         choices=["van_rossum", "cross_entropy"],
+                         help="Training loss: 'van_rossum' (default, spike-train "
+                              "MSE) or 'cross_entropy' (ablation: softmax "
+                              "cross-entropy on population spike counts).")
+    train_p.add_argument("--tau-vr", type=float, default=10.0,
+                         help="Van Rossum kernel time constant in timesteps "
+                              "(default 10.0). Unused when --loss-type=cross_entropy.")
+    train_p.add_argument("--train-batch-size", type=int, default=64,
+                         help="Mini-batch size for SNN training (default 64).")
     train_p.add_argument("--feature-selection-method",
                          choices=["mibif", "none"], default="mibif")
     train_p.add_argument("--feature-percentile", type=float, default=50.0)
@@ -251,6 +259,23 @@ def build_parser() -> argparse.ArgumentParser:
     infer_p = sub.add_parser("infer", parents=[shared], help="Run inference.")
     infer_p.add_argument("--fold", type=int, required=True)
     infer_p.add_argument("--n-folds", type=int, default=10)
+    infer_p.add_argument("--csp-bits", type=int, default=None, choices=[8, 6, 4],
+                         help="Simulate PTQ by quantizing CSP filter weights to "
+                              "this many bits before inference (default: no "
+                              "quantisation).")
+
+    # ---- reliability ----
+    rel_p = sub.add_parser(
+        "reliability", parents=[shared],
+        help="Run Monte Carlo hardware-noise reliability sweep on a saved fold (B15).",
+    )
+    rel_p.add_argument("--fold", type=int, required=True)
+    rel_p.add_argument("--reliability-severities", type=_parse_severities,
+                       default=[0.0, 0.05, 0.1, 0.2, 0.3],
+                       help="Noise severities to sweep, as sigma_frac values, "
+                            "e.g. '[0.0,0.05,0.1,0.2,0.3]'.")
+    rel_p.add_argument("--reliability-n-repeats", type=int, default=20,
+                       help="Monte Carlo repeats per severity level (default 20).")
 
     # ---- aggregate ----
     agg_p = sub.add_parser("aggregate", parents=[shared],
@@ -289,15 +314,16 @@ def config_from_args(args: argparse.Namespace) -> Config:
 
     # mode-specific fields (all optional — Config has defaults)
     optional_fields = [
-        "n_folds", "fold", "val_fraction", "adaptive_bands", "n_adaptive_bands", "freq_bands",
-        "band_range", "bandwidth", "band_step", "min_fisher_fraction", "filter_type",
+        "n_folds", "fold", "val_fraction", "freq_bands", "filter_type",
         "csp_components_per_band", "lambda_r", "euclidean_alignment", "riemannian_mean", "csp_ledoit_wolf",
-        "augment_windows", "window_duration", "window_step",
+        "csp_dual_end",
         "encoder_type", "base_thresh", "adapt_inc", "decay",
         "hidden_neurons", "population_per_class", "beta", "dropout_prob",
         "lr", "weight_decay", "epochs", "early_stopping_patience",
-        "early_stopping_warmup", "spiking_prob",
+        "early_stopping_warmup", "spiking_prob", "loss_type", "tau_vr",
+        "train_batch_size",
         "feature_selection_method", "feature_percentile", "mi_fraction",
+        "csp_bits", "reliability_severities", "reliability_n_repeats",
     ]
     for f in optional_fields:
         if hasattr(args, f):

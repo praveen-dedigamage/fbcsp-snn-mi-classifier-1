@@ -1,6 +1,6 @@
 """Spike encoding with JIT-compiled inner loops.
 
-Two encoders are provided:
+Three encoders are provided:
 
 Delta encoder (default, ``encoder_type='delta'``)
 -------------------------------------------------
@@ -25,6 +25,16 @@ For each timestep *t* and feature *f*:
 ADM output shape is ``(T, batch, 2*n_features)`` — ON channels first, OFF
 channels second.  The doubled feature dimension flows through MIBIF and the
 SNN automatically via ``spikes.shape[2]``.
+
+Fixed-threshold encoder (``encoder_type='fixed'``, ablation only)
+-------------------------------------------------------------------
+Same delta rule as the adaptive encoder, but the threshold never changes —
+no ``adapt_inc``/``decay`` dynamics. Isolates whether adaptivity itself is
+responsible for the adaptive-threshold encoder's contribution, or whether any
+delta-based binary encoder would do:
+
+1. Compute ``|x[t,f] - x[t-1,f]|``
+2. If delta > ``base_thresh``: emit a spike (1), else 0
 
 Both loops are JIT-compiled via ``@torch.jit.script``; inner operations are
 vectorised across batch and feature dimensions.
@@ -96,6 +106,90 @@ def _adaptive_threshold_encode_jit(
         fired = (delta > threshold).to(x.dtype)       # (batch, n_feat)
         spikes[t] = fired
         # Decay threshold every step; increment on spike
+        threshold = threshold * decay + fired * adapt_inc
+
+    return spikes
+
+
+@torch.jit.script
+def _fixed_threshold_encode_jit(
+    x: torch.Tensor,
+    base_thresh: float,
+) -> torch.Tensor:
+    """JIT-compiled fixed-threshold delta encoder (ablation).
+
+    Same delta rule as :func:`_adaptive_threshold_encode_jit` but the
+    threshold is held constant at *base_thresh* for the entire trial — no
+    adaptive increment or decay. Isolates whether threshold adaptivity
+    itself matters, independent of the underlying delta-encoding scheme.
+
+    Parameters
+    ----------
+    x : torch.Tensor
+        Input signal, shape ``(T, batch, n_features)``.  Must be float.
+    base_thresh : float
+        Constant threshold applied at every timestep.
+
+    Returns
+    -------
+    torch.Tensor
+        Binary spike tensor, same shape as *x*.  dtype matches *x*.
+    """
+    T: int = x.shape[0]
+
+    spikes = torch.zeros_like(x)
+
+    for t in range(1, T):
+        delta = torch.abs(x[t] - x[t - 1])          # (batch, n_feat)
+        spikes[t] = (delta > base_thresh).to(x.dtype)
+
+    return spikes
+
+
+@torch.jit.script
+def _adaptive_threshold_encode_noisy_jit(
+    x: torch.Tensor,
+    init_threshold: torch.Tensor,
+    adapt_inc: float,
+    decay: float,
+) -> torch.Tensor:
+    """JIT-compiled adaptive-threshold encoder with a per-feature initial
+    threshold (B15 Tier B — comparator/threshold offset noise).
+
+    Identical adaptation dynamics to :func:`_adaptive_threshold_encode_jit`,
+    but the initial threshold is a per-feature tensor instead of a single
+    scalar broadcast to every feature — models per-channel comparator offset
+    variability in an analog implementation. The existing production kernel
+    is left untouched; this is a separate, additive path used only for
+    reliability/noise-robustness testing.
+
+    Parameters
+    ----------
+    x : torch.Tensor
+        Input signal, shape ``(T, batch, n_features)``.  Must be float.
+    init_threshold : torch.Tensor
+        Per-feature initial threshold, shape ``(n_features,)``, already
+        perturbed by the caller (e.g. via Gaussian offset noise).
+    adapt_inc : float
+        Amount added to the threshold whenever a spike is emitted.
+    decay : float
+        Multiplicative decay applied to the threshold at every timestep.
+
+    Returns
+    -------
+    torch.Tensor
+        Binary spike tensor, same shape as *x*.  dtype matches *x*.
+    """
+    T: int = x.shape[0]
+    batch: int = x.shape[1]
+
+    spikes = torch.zeros_like(x)
+    threshold = init_threshold.to(dtype=x.dtype, device=x.device).unsqueeze(0).expand(batch, -1).clone()
+
+    for t in range(1, T):
+        delta = torch.abs(x[t] - x[t - 1])          # (batch, n_feat)
+        fired = (delta > threshold).to(x.dtype)       # (batch, n_feat)
+        spikes[t] = fired
         threshold = threshold * decay + fired * adapt_inc
 
     return spikes
@@ -241,6 +335,8 @@ def encode_csp_projections(
     encoder_type : str
         ``'delta'`` — adaptive-threshold delta encoder (default).
         ``'adm'``   — ON/OFF ADM encoder; output features doubled.
+        ``'fixed'`` — ablation: constant-threshold delta encoder, no
+        adaptation.
     device : Optional[torch.device]
         Target device.  Defaults to :data:`fbcsp_snn.DEVICE`.
 
@@ -296,15 +392,65 @@ def encode_tensor(
     base_thresh, adapt_inc, decay : float
         Encoding hyperparameters.
     encoder_type : str
-        ``'delta'`` (default) or ``'adm'``.  ADM output has shape
+        ``'delta'`` (default), ``'adm'``, or ``'fixed'`` (ablation: constant
+        threshold, no adaptation).  ADM output has shape
         ``(T, batch, 2*n_features)``.
 
     Returns
     -------
     torch.Tensor
-        Binary spikes, same shape as *X* for ``'delta'``, or
+        Binary spikes, same shape as *X* for ``'delta'``/``'fixed'``, or
         ``(T, batch, 2*n_features)`` for ``'adm'``.
     """
     if encoder_type == "adm":
         return _adm_encode_jit(X, base_thresh, adapt_inc, decay)
+    if encoder_type == "fixed":
+        return _fixed_threshold_encode_jit(X, base_thresh)
     return _adaptive_threshold_encode_jit(X, base_thresh, adapt_inc, decay)
+
+
+def encode_tensor_with_threshold_noise(
+    X: torch.Tensor,
+    base_thresh: float = 0.001,
+    adapt_inc: float = 0.6,
+    decay: float = 0.95,
+    sigma_frac: float = 0.0,
+    seed: Optional[int] = None,
+) -> torch.Tensor:
+    """Adaptive-threshold encoding with per-feature comparator offset noise
+    (B15 Tier B — analog non-ideality injection).
+
+    Models per-channel comparator offset variability: each feature's initial
+    threshold is ``base_thresh`` perturbed by independent Gaussian noise,
+    instead of every feature sharing exactly the same initial threshold.
+    Only the delta encoder supports this (ADM/fixed are unaffected by this
+    function).
+
+    Parameters
+    ----------
+    X : torch.Tensor
+        Input signal ``(T, batch, n_features)``.
+    base_thresh, adapt_inc, decay : float
+        Encoding hyperparameters (same meaning as :func:`encode_tensor`).
+    sigma_frac : float
+        Per-feature threshold noise std as a fraction of *base_thresh*
+        (e.g. ``0.1`` = 10% comparator offset variability). ``0.0`` (default)
+        reproduces the noise-free encoder exactly.
+    seed : Optional[int]
+        RNG seed for reproducibility across Monte Carlo repeats.
+
+    Returns
+    -------
+    torch.Tensor
+        Binary spikes, same shape as *X*.
+    """
+    n_features = X.shape[2]
+    if sigma_frac == 0.0:
+        init_threshold = torch.full((n_features,), base_thresh, dtype=X.dtype, device=X.device)
+    else:
+        gen = torch.Generator(device=X.device)
+        if seed is not None:
+            gen.manual_seed(seed)
+        noise = torch.randn(n_features, generator=gen, device=X.device, dtype=X.dtype)
+        init_threshold = (base_thresh + noise * sigma_frac * base_thresh).clamp(min=1e-6)
+    return _adaptive_threshold_encode_noisy_jit(X, init_threshold, adapt_inc, decay)
