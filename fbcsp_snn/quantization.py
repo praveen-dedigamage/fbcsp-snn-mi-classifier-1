@@ -245,6 +245,91 @@ def inject_csp_filter_noise(
     return noisy
 
 
+def inject_ea_whitener_noise(
+    ea_whiteners: Dict,
+    sigma_frac: float,
+    seed: Optional[int] = None,
+) -> Dict:
+    """Return a copy of the Euclidean Alignment whitener dict with noise injected.
+
+    The EA whitener (``R^{-1/2}``, per band) is the same mathematical class
+    as the CSP filters — a linear transform / analog crossbar matrix
+    multiply — but was excluded from :func:`inject_csp_filter_noise`'s sweep
+    since it's a separate stored artefact (`PairwiseCSP.ea_whiteners_`, not
+    `PairwiseCSP.filters_`). This closes that gap.
+
+    Parameters
+    ----------
+    ea_whiteners : Dict
+        Mapping ``band_idx -> np.ndarray``, as stored in
+        :attr:`PairwiseCSP.ea_whiteners_`.
+    sigma_frac : float
+        Per-matrix noise std as a fraction of that matrix's peak magnitude.
+    seed : Optional[int]
+        Base RNG seed; incremented per band.
+
+    Returns
+    -------
+    Dict
+        New dict with noise-injected whitener matrices.
+    """
+    noisy: Dict = {}
+    for i, (key, R) in enumerate(ea_whiteners.items()):
+        band_seed = None if seed is None else seed + i
+        noisy[key] = inject_weight_noise_array(R, sigma_frac, seed=band_seed)
+
+    logger.info(
+        "Weight-noise EA whitener: injected sigma_frac=%.4f into %d matrices",
+        sigma_frac, len(ea_whiteners),
+    )
+    return noisy
+
+
+def inject_znorm_noise(
+    mean: np.ndarray,
+    std: np.ndarray,
+    sigma_frac: float,
+    seed: Optional[int] = None,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Add Gaussian noise to z-normalisation mean/std (analog reference drift).
+
+    Models imprecision in the analog reference voltage (mean, typically a
+    subtraction stage) and gain (1/std, typically a multiplicative stage) of
+    a physical z-normalisation circuit.
+
+    Parameters
+    ----------
+    mean : np.ndarray
+        Per-feature mean, shape ``(n_features,)``, as stored in
+        :attr:`fbcsp_snn.preprocessing.ZNormaliser.mean_`.
+    std : np.ndarray
+        Per-feature std, shape ``(n_features,)``, as stored in
+        :attr:`fbcsp_snn.preprocessing.ZNormaliser.std_`.
+    sigma_frac : float
+        Noise std as a fraction of each array's peak magnitude.
+    seed : Optional[int]
+        Base RNG seed; ``std``'s noise uses ``seed + 1`` so mean/std don't
+        get identical noise draws.
+
+    Returns
+    -------
+    Tuple[np.ndarray, np.ndarray]
+        Noisy ``(mean, std)``. ``std`` is floored at ``1e-8`` (matching
+        `ZNormaliser.fit`'s own epsilon) to avoid division by zero/negative
+        scale downstream.
+    """
+    std_seed = None if seed is None else seed + 1
+    mean_noisy = inject_weight_noise_array(mean, sigma_frac, seed=seed)
+    std_noisy = inject_weight_noise_array(std, sigma_frac, seed=std_seed)
+    std_noisy = np.maximum(std_noisy, 1e-8)
+
+    logger.info(
+        "Weight-noise Z-norm: injected sigma_frac=%.4f into mean/std (%d features)",
+        sigma_frac, mean.shape[0],
+    )
+    return mean_noisy, std_noisy
+
+
 # ---------------------------------------------------------------------------
 # Accuracy-loss summary
 # ---------------------------------------------------------------------------
@@ -342,11 +427,18 @@ def inject_model_weight_noise(
     model: SNNClassifier,
     sigma_frac: float,
     seed: Optional[int] = None,
+    include_bias: bool = True,
 ) -> SNNClassifier:
-    """Return a deep copy of *model* with Gaussian noise added to Linear weights.
+    """Return a deep copy of *model* with Gaussian noise added to Linear
+    weights (and, by default, biases).
 
-    Mirrors :func:`quantize_model`'s scope (``Linear.weight`` only; biases
-    and LIF parameters untouched — see :func:`inject_beta_noise` for those).
+    Unlike :func:`quantize_model` (which intentionally excludes biases for a
+    bit-precision reason — "INT8 biases add hardware complexity for minimal
+    benefit"), biases are included here by default: that rationale doesn't
+    carry over to analog noise injection, since biases are just as
+    physically-realised (offset currents/voltages) as weights and subject to
+    the same device mismatch. Set ``include_bias=False`` to restrict noise
+    to weights only, matching the old scope.
 
     Parameters
     ----------
@@ -355,8 +447,11 @@ def inject_model_weight_noise(
     sigma_frac : float
         Per-tensor noise std as a fraction of that tensor's peak magnitude.
     seed : Optional[int]
-        RNG seed. Incremented per layer so multi-layer models don't get
-        identical noise patterns on every weight tensor.
+        Base RNG seed. Each weight/bias tensor gets its own offset so
+        multi-layer models don't get identical noise patterns.
+    include_bias : bool
+        If ``True`` (default), also perturb ``Linear.bias``. If ``False``,
+        weights only (the old scope, matching ``quantize_model``).
 
     Returns
     -------
@@ -366,14 +461,24 @@ def inject_model_weight_noise(
     model_q = copy.deepcopy(model)
     model_q.eval()
 
+    draw = 0
     with torch.no_grad():
-        for i, (name, module) in enumerate(model_q.named_modules()):
+        for module in model_q.modules():
             if isinstance(module, nn.Linear):
-                layer_seed = None if seed is None else seed + i
-                noisy = inject_weight_noise_tensor(
-                    module.weight.data, sigma_frac, seed=layer_seed
+                w_seed = None if seed is None else seed + draw
+                draw += 1
+                noisy_w = inject_weight_noise_tensor(
+                    module.weight.data, sigma_frac, seed=w_seed
                 )
-                module.weight.data.copy_(noisy)
+                module.weight.data.copy_(noisy_w)
+
+                if include_bias and module.bias is not None:
+                    b_seed = None if seed is None else seed + draw
+                    draw += 1
+                    noisy_b = inject_weight_noise_tensor(
+                        module.bias.data, sigma_frac, seed=b_seed
+                    )
+                    module.bias.data.copy_(noisy_b)
 
     return model_q
 

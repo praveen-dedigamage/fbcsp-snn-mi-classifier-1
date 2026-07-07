@@ -34,7 +34,7 @@ from __future__ import annotations
 
 import logging
 from itertools import combinations
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 from numpy.linalg import LinAlgError
@@ -147,6 +147,136 @@ def apply_filter_bank(
         (n_trials, n_channels, n_samples),
         (n_trials, n_channels * len(bands), n_samples),
     )
+    return filtered
+
+
+# ---------------------------------------------------------------------------
+# Filter bank — analog component-value noise (B15 reliability, 2026-07-07)
+# ---------------------------------------------------------------------------
+# The causal Butterworth/Bessel design is chosen specifically because it maps
+# to a real-time analog Gm-C circuit (see module docstring). That claim has
+# never been stress-tested against actual analog component-value variation —
+# these functions close that gap. Kept separate from bandpass_filter()/
+# apply_filter_bank() (the production path used by every training run) so
+# the validated production kernels are never touched by this addition.
+
+def bandpass_filter_noisy(
+    X: np.ndarray,
+    lo: float,
+    hi: float,
+    sfreq: float,
+    order: int = 4,
+    filter_type: str = "butterworth",
+    sigma_frac: float = 0.0,
+    seed: Optional[int] = None,
+) -> np.ndarray:
+    """Bandpass filter with Gaussian noise injected into the ``sos`` coefficients.
+
+    Models component-value variation (capacitor/transconductance tolerance)
+    in an analog Gm-C realisation of the filter — the same class of
+    non-ideality already tested for CSP/SNN weights
+    (:func:`fbcsp_snn.quantization.inject_weight_noise_array`), applied here
+    to the filter design coefficients instead.
+
+    Parameters
+    ----------
+    X : np.ndarray
+        Input data, shape ``(n_trials, n_channels, n_samples)``.
+    lo, hi : float
+        Bandpass cutoff frequencies in Hz.
+    sfreq : float
+        Sampling frequency in Hz.
+    order : int
+        Filter order.
+    filter_type : str
+        ``'butterworth'`` or ``'bessel'``.
+    sigma_frac : float
+        Noise std as a fraction of the ``sos`` coefficients' peak magnitude.
+        ``0.0`` reproduces :func:`bandpass_filter` exactly.
+    seed : Optional[int]
+        RNG seed for reproducibility across Monte Carlo repeats.
+
+    Returns
+    -------
+    np.ndarray
+        Filtered data, same shape as *X*, dtype ``float32``.
+    """
+    from fbcsp_snn.quantization import inject_weight_noise_array
+
+    nyq = sfreq / 2.0
+    lo_n = np.clip(lo / nyq, 1e-4, 1.0 - 1e-4)
+    hi_n = np.clip(hi / nyq, 1e-4, 1.0 - 1e-4)
+
+    if filter_type == "bessel":
+        sos = bessel(order, [lo_n, hi_n], btype="bandpass", norm="delay", output="sos")
+    else:
+        sos = butter(order, [lo_n, hi_n], btype="bandpass", output="sos")
+
+    if sigma_frac > 0.0:
+        # scipy's sos format is [b0,b1,b2,a0,a1,a2] per section, with a0
+        # (column 3) *always* normalised to 1.0 by convention — sosfilt
+        # rejects the array otherwise. Physically, a0=1 is a normalisation
+        # of the true circuit coefficients, not itself a component value, so
+        # perturbing only the other 5 columns is both required for validity
+        # and the physically correct choice.
+        noisy_cols = [0, 1, 2, 4, 5]
+        sos = sos.copy()
+        sos[:, noisy_cols] = inject_weight_noise_array(
+            sos[:, noisy_cols], sigma_frac, seed=seed
+        )
+
+    n_trials, n_channels, n_samples = X.shape
+    X_2d = X.reshape(n_trials * n_channels, n_samples)
+    X_filt_2d = sosfilt(sos, X_2d, axis=-1)
+    return X_filt_2d.reshape(n_trials, n_channels, n_samples).astype(np.float32)
+
+
+def apply_filter_bank_noisy(
+    X: np.ndarray,
+    bands: List[Tuple[float, float]],
+    sfreq: float,
+    order: int = 4,
+    filter_type: str = "butterworth",
+    sigma_frac: float = 0.0,
+    seed: Optional[int] = None,
+) -> List[np.ndarray]:
+    """Apply a bank of bandpass filters with per-band ``sos`` coefficient noise.
+
+    Mirrors :func:`apply_filter_bank`; each band gets an independent noise
+    draw (seed offset by band index) so noise doesn't repeat identically
+    across bands.
+
+    Parameters
+    ----------
+    X : np.ndarray
+        Raw EEG, shape ``(n_trials, n_channels, n_samples)``.
+    bands : List[Tuple[float, float]]
+        List of ``(lo, hi)`` frequency bands in Hz.
+    sfreq : float
+        Sampling frequency in Hz.
+    order : int
+        Filter order.
+    filter_type : str
+        ``'butterworth'`` or ``'bessel'``.
+    sigma_frac : float
+        Per-band noise std as a fraction of that band's ``sos`` peak magnitude.
+    seed : Optional[int]
+        Base RNG seed; incremented per band.
+
+    Returns
+    -------
+    List[np.ndarray]
+        One filtered array per band, each shape
+        ``(n_trials, n_channels, n_samples)``.
+    """
+    filtered: List[np.ndarray] = []
+    for i, (lo, hi) in enumerate(bands):
+        band_seed = None if seed is None else seed + i
+        X_band = bandpass_filter_noisy(
+            X, lo, hi, sfreq, order=order, filter_type=filter_type,
+            sigma_frac=sigma_frac, seed=band_seed,
+        )
+        filtered.append(X_band)
     return filtered
 
 

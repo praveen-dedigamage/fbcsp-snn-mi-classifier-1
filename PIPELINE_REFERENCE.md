@@ -477,6 +477,15 @@ with the impression. Tracked as **B15** in the paper's `TODO.md` — the single
 most consequential open item, since it's the actual experimental work needed
 to back up the paper's central hardware-compatibility claim (B8).
 
+**Known scope gap (2026-07-07):** Tier B (implemented, §10 below) only
+noise-tests CSP weights, SNN weights, and LIF beta — not the filter bank's
+Butterworth/Bessel coefficients (the most important gap, since §2a's
+hardware argument specifically leans on the bandpass filter being
+Gm-C-realizable), the spike encoder's `adapt_inc`/`decay`, Z-normalisation
+mean/std, the Euclidean Alignment whitener, or SNN biases. Full priority
+order in `RESULTS_LOG.md`'s "Known scope gap" section (code repo) and
+`TODO.md`'s B15 entry (paper folder). Not yet implemented.
+
 ### 9a. What's actually wrong with the current quantisation tests
 
 Read `quantization.py` end to end (`quantize_tensor_symmetric`,
@@ -722,3 +731,131 @@ All of the above is **code, verified to compile and argue-parse correctly,
 not yet run**. The actual "submit → wait → copy results" loop (B2's two
 datasets, B11's three ablations, B15's reliability sweep, and re-validating
 Tier 0's baseline tuning) hasn't started yet — that's the next phase.
+
+---
+
+## 11. Closing the reliability sweep's scope gap (2026-07-07)
+
+User's request: fully back the "analog-circuit-realizable" claim, so the
+noise-injection scope gap flagged after §10 (CSP + SNN weights + beta only)
+needed closing. All five gaps closed, plus one new experiment added on top.
+
+### 11a. Filter bank coefficient noise (the most important gap)
+
+New `bandpass_filter_noisy()`/`apply_filter_bank_noisy()` in
+`preprocessing.py`, added as new functions alongside (not modifying)
+`bandpass_filter()`/`apply_filter_bank()` — the production kernels used by
+every training run stay untouched. Perturbs the `scipy.signal` `sos`
+(second-order-sections) filter design coefficients with noise from
+`quantization.py`'s `inject_weight_noise_array`.
+
+**Real bug caught and fixed during implementation, not just planned:**
+naively adding Gaussian noise to the entire `sos` array breaks scipy's
+requirement that column 3 (the `a0` coefficient) stay exactly `1.0` per
+section — `sosfilt` raises `ValueError: sos[:, 3] should be all ones` and
+rejects the array outright. Caught by actually running a numpy/scipy sanity
+check before considering this done (not just compiling). Fixed by
+perturbing only the other 5 columns per section:
+```python
+noisy_cols = [0, 1, 2, 4, 5]
+sos[:, noisy_cols] = inject_weight_noise_array(sos[:, noisy_cols], sigma_frac, seed=seed)
+```
+This is also the physically correct choice, not just a workaround: `a0=1`
+is scipy's normalisation convention, not itself a real component value — the
+true circuit coefficients are the *ratios* of the physical parameters to
+`a0`, so leaving it fixed and perturbing the rest matches what "component
+variation" actually means here. Verified against both Butterworth and
+Bessel filters (both use the same `a0=1` convention) before moving on.
+
+### 11b. Spike encoder: adapt_inc/decay noise (same reasoning as beta)
+
+Generalized `_adaptive_threshold_encode_noisy_jit` (`encoding.py`) from
+accepting a per-feature `init_threshold` tensor with scalar `adapt_inc`/
+`decay`, to accepting all three as per-feature tensors. The Python wrapper
+`encode_tensor_with_threshold_noise()` gained `adapt_inc_sigma_frac`/
+`decay_sigma_frac` parameters alongside the existing `sigma_frac`, via a new
+small helper `_noisy_per_feature()` shared across all three parameters
+(threshold, adapt_inc, decay — each independently perturbable, with `decay`
+clamped to `[1e-3, 0.999]` to stay a valid multiplicative factor).
+
+**Also caught while doing this work:** the *original* Tier B threshold-noise
+function (`encode_tensor_with_threshold_noise`, built in the §9/§10 pass)
+had never actually been wired into a runnable sweep in `reliability.py` —
+built but unused. Fixed alongside the new adaptation-noise work; both are
+now separate sweeps (`encoder_threshold_noise`, `encoder_adaptation_noise`).
+
+### 11c. Z-normalisation and Euclidean Alignment whitener noise
+
+Two new functions in `quantization.py`, both thin wrappers around the
+already-verified `inject_weight_noise_array`:
+- `inject_znorm_noise(mean, std, sigma_frac, seed)` — perturbs
+  `ZNormaliser.mean_`/`std_`, std floored at `1e-8` (matching `ZNormaliser.
+  fit`'s own epsilon).
+- `inject_ea_whitener_noise(ea_whiteners, sigma_frac, seed)` — mirrors
+  `inject_csp_filter_noise`'s exact structure (same `Dict[int, np.ndarray]`
+  shape as `PairwiseCSP.ea_whiteners_`). Degrades gracefully to a no-op if a
+  fold's CSP was fit with `euclidean_alignment=False` (empty dict, nothing
+  to perturb, not an error).
+
+### 11d. SNN biases
+
+`inject_model_weight_noise` (`quantization.py`) gained an `include_bias:
+bool = True` parameter — biases are now perturbed by default alongside
+weights, reasoning being that `quantize_model`'s bias-exclusion rationale
+("INT8 biases add hardware complexity for minimal benefit") is specific to
+*bit-precision* quantisation and doesn't carry over to *noise injection*,
+where biases are just as physically-realised (offset currents/voltages) as
+weights. `include_bias=False` still available to restrict to the old scope.
+Purely additive to the function signature — the existing call in
+`reliability.py` (`inject_model_weight_noise(model, sigma, seed=seed)`)
+needed no changes, new parameter defaults transparently.
+
+### 11e. Wiring — `_encode_test()` generalised to a single noise-composable function
+
+`run_reliability()`'s `_encode_test()` helper was rewritten from taking one
+positional `csp_filters_to_use` argument to a fully keyword-only function
+with one optional override per noise source (`csp_filters`, `ea_whiteners`,
+`znorm_mean`, `znorm_std`, `filter_sigma_frac`/`filter_seed`,
+`encoder_thresh_sigma`/`encoder_adapt_sigma`/`encoder_decay_sigma`/
+`encoder_seed`). Every parameter defaults to the clean/saved value, so
+`_encode_test()` with no arguments reproduces the noise-free pipeline
+exactly — verified this is what the "clean baseline" computation at the top
+of `run_reliability()` actually calls. Every sweep function passes only the
+override(s) relevant to what it's testing; nothing leaks between calls
+since each call resets all four mutable pieces (`csp.filters_`,
+`csp.ea_whiteners_`, `znorm.mean_`, `znorm.std_`) before applying overrides,
+never carrying over state from a previous call.
+
+`run_reliability()` now runs **9 sweeps**: `csp_weight_noise`,
+`snn_weight_noise`, `beta_noise`, `filter_bank_noise`, `ea_whitener_noise`,
+`znorm_noise`, `encoder_threshold_noise`, `encoder_adaptation_noise`, and
+(§11f) `joint_noise_all_sources`.
+
+### 11f. New experiment: joint noise across all sources simultaneously
+
+Not part of the original scope-gap list — proposed as an additional
+experiment, same justification already established for `pipeline.py`'s
+joint CSP+SNN quantisation grid: a real chip has every stage imperfect at
+once, so testing sources in isolation (as every sweep in §11a-d does
+individually) doesn't represent the actual deployment scenario. At each
+severity, `_eval_joint_noise()` perturbs all 7 sources simultaneously
+(CSP weights, EA whitener, Z-norm, filter bank, encoder threshold+adapt+
+decay, SNN weights+biases, LIF beta) with distinct seed offsets per source
+(`seed`, `seed+1000`, `seed+2000`, ... `seed+6000`) so they don't share
+identical noise draws, then evaluates once. This is the single most
+representative number for "does this pipeline survive being built as an
+actual analog chip" — more so than any individual sweep.
+
+### 11g. Verification
+
+`py_compile` across every changed file, plus targeted runtime checks where
+possible without `torch`/`scipy` dependencies installed for the full stack:
+- Pure numpy/scipy check of the filter-noise fix (§11a) — confirmed
+  `sosfilt` accepts the noisy `sos`, output is finite, differs from clean,
+  and `sigma_frac=0` reproduces the original exactly.
+- Full argparse dry-run regression check across all 4 CLI modes — unchanged
+  from §10g, still passes (this session's changes don't touch `config.py`).
+- **Still not verified locally** (same standing limitation as §10): the
+  `torch.jit.script` compilation of the generalized encoder kernel, and the
+  actual end-to-end sweep execution against a real trained checkpoint —
+  both need the first real Puhti run.

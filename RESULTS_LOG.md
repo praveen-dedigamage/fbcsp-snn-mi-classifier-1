@@ -10,6 +10,106 @@ final and copied into the paper.
 
 ---
 
+## Decided run order (2026-07-07)
+
+1. **Verification retrain — `Results_verify` (new dir, do NOT overwrite `Results/`).**
+   `bash submit_puhti.sh Results_verify` — no ablation flags, default full
+   pipeline. Purpose: confirm the new codebase reproduces the original
+   paper-producing numbers before trusting anything built on top of it.
+   Original `Results/` must stay untouched as the reference — retraining
+   into the same paths would silently overwrite the checkpoints being
+   verified against, with no way back.
+2. **Reliability sweep** — `sbatch run_puhti_reliability.sh`, once step 1
+   confirms no regression (or immediately against untouched `Results/` if
+   those checkpoints are still there — the sweep needs no retraining either
+   way, it's pure inference on a saved checkpoint).
+3. **B2 — Cho2017 + BNCI2015-001** (fills empty Table V).
+4. **B11 — the three ablations** (essential evidence for the abstract's
+   three claimed contributions).
+
+### What "verification" actually checks — isolated vs. joint vs. new fields
+
+Not everything in `summary.csv` is checked the same way:
+
+- **Isolated fields** (`test_acc_fp32`, `test_acc_int8`,
+  `test_acc_csp_{8,6,4}bit`) → **regression check.** These are the only
+  fields with a "before" to compare against (they're exactly what's already
+  in the original `Results/` and the paper's Tables IV/VI). Should match.
+  Kept in the code only for this comparison and because `analyze_results.py`
+  reads these exact keys — **not** meant to be the primary hardware-realism
+  evidence going forward. That's what the joint sweep is for (B15 Tier D:
+  it's supposed to *replace* these scattered numbers in the paper, not sit
+  alongside them as equally-weighted results).
+- **Joint fields** (`test_acc_joint_csp{X}_snn{Y}`) → **new evidence, no
+  prior number to check.** First time this grid has ever been computed —
+  nothing tested "CSP=8bit and SNN=6bit simultaneously" before this session.
+- **`mean_events_per_trial`** → also brand new, no prior baseline. This is
+  the number that should replace B8's unmeasured "0.15 spikes/neuron/
+  timestep" assumption once it comes back from Puhti.
+- **`val_acc_lda`/`test_acc_lda`/`val_acc_svm`/`test_acc_svm`** → **expected
+  to differ from the original run, on purpose.** Tier 0 tuning intentionally
+  changed how these are computed (LDA shrinkage, SVM grid search) — a
+  mismatch here is the tuning working, not a regression.
+
+---
+
+## Scope gap in the reliability sweep — CLOSED 2026-07-07
+
+Originally flagged: Tier B noise-tested CSP weights, SNN weights, and LIF
+beta only — a reasonable minimum-viable set, but not sufficient to fully
+back a blanket "this pipeline is analog-circuit-realizable" claim. **All
+five gaps below are now implemented and wired into `run_reliability()`.**
+
+1. **Filter bank coefficients (Butterworth/Bessel `sos` values) — DONE.**
+   New `bandpass_filter_noisy`/`apply_filter_bank_noisy` in
+   `preprocessing.py`, wired as the `filter_bank_noise` sweep. This was the
+   most important gap: the paper's hardware-realizability argument
+   specifically leans on the bandpass filter being Gm-C-circuit realizable
+   (§2a), and that claim had never been stress-tested against actual analog
+   component-value variation until now.
+   - **Real bug caught and fixed during implementation:** naively adding
+     noise to the full `sos` array breaks scipy's requirement that column 3
+     (the `a0` coefficient) stay exactly `1.0` — `sosfilt` rejects the array
+     otherwise. Fixed by only perturbing the other 5 columns per section
+     (also the physically correct choice: `a0=1` is a normalisation
+     convention, not itself a component value). Verified with both
+     Butterworth and Bessel filters before considering this done.
+2. **Spike encoder's `adapt_inc`/`decay` — DONE.** Generalized the noisy
+   encoder kernel (`_adaptive_threshold_encode_noisy_jit`) to accept
+   per-feature `adapt_inc`/`decay` tensors, not just per-feature threshold.
+   Wired as two sweeps: `encoder_threshold_noise` (comparator offset —
+   this was actually built in the original Tier B pass but never wired into
+   a runnable sweep, caught and fixed now too) and `encoder_adaptation_noise`
+   (adapt_inc + decay together).
+3. **Z-normalisation mean/std — DONE.** New `inject_znorm_noise` in
+   `quantization.py`, wired as the `znorm_noise` sweep.
+4. **Euclidean Alignment whitener matrix — DONE.** New
+   `inject_ea_whitener_noise` in `quantization.py` (mirrors
+   `inject_csp_filter_noise`'s structure exactly, same dict-of-matrices
+   shape), wired as the `ea_whitener_noise` sweep. Degrades gracefully to a
+   no-op if a fold's CSP was fit with `euclidean_alignment=False`.
+5. **SNN biases — DONE.** `inject_model_weight_noise` now perturbs
+   `Linear.bias` by default (`include_bias=True`), alongside weights, in the
+   same `snn_weight_noise` sweep.
+6. **Still correctly out of scope, no gap:** MIBIF feature selection
+   (routing/wire selection, not a continuous analog coefficient) and Van
+   Rossum loss (training-only, no inference-time circuit).
+
+**New experiment added on top of closing the gaps:** `joint_noise_all_sources`
+— every one of the 7 individual noise sources perturbed simultaneously at
+matched severity, since a real chip has every stage imperfect at once and
+testing sources in isolation doesn't represent the actual deployment
+scenario (same principle as `pipeline.py`'s joint CSP+SNN quantisation grid,
+extended here to the full noise picture).
+
+`run_reliability()` now runs **9 sweeps total**: `csp_weight_noise`,
+`snn_weight_noise`, `beta_noise`, `filter_bank_noise`, `ea_whitener_noise`,
+`znorm_noise`, `encoder_threshold_noise`, `encoder_adaptation_noise`,
+`joint_noise_all_sources`. Full technical detail: `PIPELINE_REFERENCE.md`
+§11.
+
+---
+
 ## How to submit each experiment
 
 ```bash

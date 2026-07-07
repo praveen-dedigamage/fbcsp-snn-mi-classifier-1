@@ -150,18 +150,21 @@ def _fixed_threshold_encode_jit(
 def _adaptive_threshold_encode_noisy_jit(
     x: torch.Tensor,
     init_threshold: torch.Tensor,
-    adapt_inc: float,
-    decay: float,
+    adapt_inc: torch.Tensor,
+    decay: torch.Tensor,
 ) -> torch.Tensor:
-    """JIT-compiled adaptive-threshold encoder with a per-feature initial
-    threshold (B15 Tier B — comparator/threshold offset noise).
+    """JIT-compiled adaptive-threshold encoder with per-feature threshold,
+    adapt_inc, and decay (B15 Tier B — comparator offset + adaptation-rate
+    noise).
 
     Identical adaptation dynamics to :func:`_adaptive_threshold_encode_jit`,
-    but the initial threshold is a per-feature tensor instead of a single
-    scalar broadcast to every feature — models per-channel comparator offset
-    variability in an analog implementation. The existing production kernel
-    is left untouched; this is a separate, additive path used only for
-    reliability/noise-robustness testing.
+    but all three parameters are per-feature tensors instead of scalars
+    shared across every feature — models per-channel comparator offset
+    variability *and* per-channel analog time-constant mismatch in the
+    adaptation circuitry (the same class of non-ideality as LIF `beta`
+    variation, applied to the encoder's own adaptation dynamics). The
+    existing production kernel is left untouched; this is a separate,
+    additive path used only for reliability/noise-robustness testing.
 
     Parameters
     ----------
@@ -170,10 +173,10 @@ def _adaptive_threshold_encode_noisy_jit(
     init_threshold : torch.Tensor
         Per-feature initial threshold, shape ``(n_features,)``, already
         perturbed by the caller (e.g. via Gaussian offset noise).
-    adapt_inc : float
-        Amount added to the threshold whenever a spike is emitted.
-    decay : float
-        Multiplicative decay applied to the threshold at every timestep.
+    adapt_inc : torch.Tensor
+        Per-feature threshold increment on spike, shape ``(n_features,)``.
+    decay : torch.Tensor
+        Per-feature multiplicative threshold decay, shape ``(n_features,)``.
 
     Returns
     -------
@@ -185,12 +188,14 @@ def _adaptive_threshold_encode_noisy_jit(
 
     spikes = torch.zeros_like(x)
     threshold = init_threshold.to(dtype=x.dtype, device=x.device).unsqueeze(0).expand(batch, -1).clone()
+    adapt_inc_b = adapt_inc.to(dtype=x.dtype, device=x.device).unsqueeze(0)   # (1, n_feat), broadcasts
+    decay_b = decay.to(dtype=x.dtype, device=x.device).unsqueeze(0)          # (1, n_feat), broadcasts
 
     for t in range(1, T):
         delta = torch.abs(x[t] - x[t - 1])          # (batch, n_feat)
         fired = (delta > threshold).to(x.dtype)       # (batch, n_feat)
         spikes[t] = fired
-        threshold = threshold * decay + fired * adapt_inc
+        threshold = threshold * decay_b + fired * adapt_inc_b
 
     return spikes
 
@@ -409,35 +414,76 @@ def encode_tensor(
     return _adaptive_threshold_encode_jit(X, base_thresh, adapt_inc, decay)
 
 
+def _noisy_per_feature(
+    nominal: float,
+    n_features: int,
+    sigma_frac: float,
+    dtype: torch.dtype,
+    device: torch.device,
+    seed: Optional[int],
+    clamp_min: float = 1e-6,
+    clamp_max: Optional[float] = None,
+) -> torch.Tensor:
+    """Build a per-feature tensor of *nominal* perturbed by Gaussian noise."""
+    if sigma_frac == 0.0:
+        return torch.full((n_features,), nominal, dtype=dtype, device=device)
+    gen = torch.Generator(device=device)
+    if seed is not None:
+        gen.manual_seed(seed)
+    noise = torch.randn(n_features, generator=gen, device=device, dtype=dtype)
+    values = nominal + noise * sigma_frac * nominal
+    if clamp_max is not None:
+        return values.clamp(min=clamp_min, max=clamp_max)
+    return values.clamp(min=clamp_min)
+
+
 def encode_tensor_with_threshold_noise(
     X: torch.Tensor,
     base_thresh: float = 0.001,
     adapt_inc: float = 0.6,
     decay: float = 0.95,
     sigma_frac: float = 0.0,
+    adapt_inc_sigma_frac: float = 0.0,
+    decay_sigma_frac: float = 0.0,
     seed: Optional[int] = None,
 ) -> torch.Tensor:
-    """Adaptive-threshold encoding with per-feature comparator offset noise
-    (B15 Tier B — analog non-ideality injection).
+    """Adaptive-threshold encoding with per-feature analog non-ideality noise
+    (B15 Tier B).
 
-    Models per-channel comparator offset variability: each feature's initial
-    threshold is ``base_thresh`` perturbed by independent Gaussian noise,
-    instead of every feature sharing exactly the same initial threshold.
-    Only the delta encoder supports this (ADM/fixed are unaffected by this
-    function).
+    Models three independent sources, each optional via its own
+    ``sigma_frac``:
+
+    - **Comparator offset** (``sigma_frac``): each feature's initial
+      threshold perturbed around ``base_thresh``, instead of every feature
+      sharing exactly the same value.
+    - **Adaptation-rate mismatch** (``adapt_inc_sigma_frac``,
+      ``decay_sigma_frac``): each feature's threshold-adaptation dynamics
+      (how fast it rises on a spike, how fast it decays between spikes)
+      perturbed around ``adapt_inc``/``decay`` — the same class of analog
+      time-constant mismatch already tested for the LIF neuron's ``beta``
+      (:func:`fbcsp_snn.quantization.inject_beta_noise`), applied here to the
+      encoder's own adaptation circuitry instead.
+
+    All three default to ``0.0`` (noise-free), reproducing
+    :func:`encode_tensor` with ``encoder_type='delta'`` exactly. Only the
+    delta encoder supports this (ADM/fixed are unaffected by this function).
 
     Parameters
     ----------
     X : torch.Tensor
         Input signal ``(T, batch, n_features)``.
     base_thresh, adapt_inc, decay : float
-        Encoding hyperparameters (same meaning as :func:`encode_tensor`).
+        Nominal encoding hyperparameters (same meaning as
+        :func:`encode_tensor`).
     sigma_frac : float
-        Per-feature threshold noise std as a fraction of *base_thresh*
-        (e.g. ``0.1`` = 10% comparator offset variability). ``0.0`` (default)
-        reproduces the noise-free encoder exactly.
+        Per-feature threshold noise std as a fraction of *base_thresh*.
+    adapt_inc_sigma_frac : float
+        Per-feature ``adapt_inc`` noise std as a fraction of *adapt_inc*.
+    decay_sigma_frac : float
+        Per-feature ``decay`` noise std as a fraction of *decay*.
     seed : Optional[int]
-        RNG seed for reproducibility across Monte Carlo repeats.
+        Base RNG seed; offset per parameter so threshold/adapt_inc/decay
+        don't all get identical noise draws.
 
     Returns
     -------
@@ -445,12 +491,19 @@ def encode_tensor_with_threshold_noise(
         Binary spikes, same shape as *X*.
     """
     n_features = X.shape[2]
-    if sigma_frac == 0.0:
-        init_threshold = torch.full((n_features,), base_thresh, dtype=X.dtype, device=X.device)
-    else:
-        gen = torch.Generator(device=X.device)
-        if seed is not None:
-            gen.manual_seed(seed)
-        noise = torch.randn(n_features, generator=gen, device=X.device, dtype=X.dtype)
-        init_threshold = (base_thresh + noise * sigma_frac * base_thresh).clamp(min=1e-6)
-    return _adaptive_threshold_encode_noisy_jit(X, init_threshold, adapt_inc, decay)
+    thresh_seed = seed
+    adapt_seed = None if seed is None else seed + 1
+    decay_seed = None if seed is None else seed + 2
+
+    init_threshold = _noisy_per_feature(
+        base_thresh, n_features, sigma_frac, X.dtype, X.device, thresh_seed,
+    )
+    adapt_inc_t = _noisy_per_feature(
+        adapt_inc, n_features, adapt_inc_sigma_frac, X.dtype, X.device, adapt_seed,
+    )
+    # decay is a multiplicative factor in (0, 1) — clamp to stay a valid decay.
+    decay_t = _noisy_per_feature(
+        decay, n_features, decay_sigma_frac, X.dtype, X.device, decay_seed,
+        clamp_min=1e-3, clamp_max=0.999,
+    )
+    return _adaptive_threshold_encode_noisy_jit(X, init_threshold, adapt_inc_t, decay_t)
