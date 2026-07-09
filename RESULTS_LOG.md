@@ -223,7 +223,7 @@ RESULTS_DIR=Results_verify sbatch run_puhti_reliability.sh
 
 ---
 
-## Energy computation — extended, not replaced (2026-07-08)
+## Energy computation — COMPLETE 2026-07-10, real measured figures in the paper
 
 Discovered mid-session that Puhti already had a real, working
 `compute_energy.py` + `run_lava_infer.py` (never git-tracked, so invisible
@@ -255,14 +255,45 @@ investigating first. Verified the cross-check's core arithmetic
 skip-on-missing-data behavior with mock `pipeline_params.json` fixtures
 before considering this done.
 
-**Status:** user ran `run_lava_infer.py` and has a `Results_lava/
-lava_summary.csv`, but hasn't validated whether the numbers are correct.
-Next step once training (step 1 in the run order) produces fresh
-`pipeline_params.json` files with the B15 event breakdown: run
+**Correction to the "never git-tracked" note above**: `run_lava_infer.py`
+and `save_test_spikes.py` turned out to actually be git-tracked (added
+commit `00b8e1a`, well before this session) — the "invisible to this repo"
+framing referred to an even older untracked copy on Puhti at the time this
+was first investigated. Confirmed 2026-07-10 when the same two files were
+found physically missing from the Puhti working tree (`mv`'d into an
+archive folder outside git's oversight during an earlier cleanup) —
+restored cleanly via `git checkout HEAD -- save_test_spikes.py
+run_lava_infer.py`, no data lost, since git had them all along.
+
+**Full run, 2026-07-10, all 9 subjects × 5 folds, zero errors:**
 ```bash
-python compute_energy.py --lava-dir Results_lava --results-dir Results_verify \
-    --subjects 1 2 3 4 5 6 7 8 9 --n-folds 5
+python save_test_spikes.py --results-dir Results_verify --subjects 1 2 3 4 5 6 7 8 9 --n-folds 5
+source .venv_lava/bin/activate   # turned out unneeded — main .venv already had lava-nc/lava-dl
+python run_lava_infer.py --results-dir Results_verify --subjects 1 2 3 4 5 6 7 8 9 --n-folds 5 --output-dir Results_lava
+python compute_energy.py --lava-dir Results_lava --results-dir Results_verify --subjects 1 2 3 4 5 6 7 8 9 --n-folds 5
 ```
+
+**Results:**
+- Lava/SLAYER accuracy vs. trained FP32: 66.0% → 65.6%, mean gap −0.40pp
+  (well under the script's own 1pp tolerance) — one fold (S7 fold 2) showed
+  a +18.75pp single-fold outlier, but S7's subject-level aggregate
+  (+3.68pp) is unremarkable; not investigated further given the tight
+  overall mean.
+- Measured mean SynOps/trial: 1,741,693 (input firing 6.1%, hidden 19.4%).
+- Cross-check (Lava-measured vs. this codebase's B15 PyTorch-side
+  estimate): mean ratio 1.14, tightly clustered 1.10–1.19 across all 9
+  subjects — consistent systematic offset, not scattered disagreement,
+  corroborating both measurements.
+- Loihi 2: 13.9 µJ/inference (measured, ~8pJ/SynOp). Comparison table added
+  to the paper (Loihi 1, Edge CPU, GPU V100 at two utilisation levels, all
+  non-Loihi figures explicitly back-of-envelope).
+
+Written into `main.tex`'s "Neuromorphic Deployment Implications" subsection
+(new label `sec:energy`) as `tab:energy`, completely replacing the old
+`eq:energy` placeholder rather than just correcting its arithmetic.
+Abstract and Introduction `\TODO{}` markers resolved. Six new citations
+added to the paper's `references.bib` (see `TODO.md` B1/B8, paper folder,
+for verification status). Full write-up: `PAPER_REWRITE_NOTES.md` §3.
 and check the cross-check table for agreement before trusting either the
 Lava-measured or PyTorch-derived SynOps figure in the paper.
 
