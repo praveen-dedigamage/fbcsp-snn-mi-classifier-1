@@ -49,10 +49,13 @@ DATA = {
         [0.135601, 0.072458, 0.035930, 0.014089, 0.005739]),
 }
 
+# Pipeline order, not arbitrary grouping: Filter Bank -> EA -> CSP ->
+# Z-norm -> Encoder (threshold, adaptation) -> SNN (weights, beta) -> Joint.
+# Lets a reader trace the panels the same way they'd trace Fig. 1.
 ORDER = [
-    "csp_weight_noise", "snn_weight_noise", "beta_noise",
-    "filter_bank_noise", "ea_whitener_noise", "znorm_noise",
-    "encoder_threshold_noise", "encoder_adaptation_noise", "joint_noise_all_sources",
+    "filter_bank_noise", "ea_whitener_noise", "csp_weight_noise",
+    "znorm_noise", "encoder_threshold_noise", "encoder_adaptation_noise",
+    "snn_weight_noise", "beta_noise", "joint_noise_all_sources",
 ]
 
 plt.rcParams.update({
@@ -66,17 +69,18 @@ plt.rcParams.update({
 
 fig, axes = plt.subplots(3, 3, figsize=(7.16, 6.4), sharex=True, sharey=True)
 
-for ax, key in zip(axes.flat, ORDER):
+for i, (ax, key) in enumerate(zip(axes.flat, ORDER)):
     title, means, stds = DATA[key]
     means = np.array(means)
     stds = np.array(stds)
     sev = np.array(SEVERITIES)
 
+    is_first = (i == 0)   # label only once, regardless of which sweep ends up first
     ax.plot(sev, means, color="steelblue", lw=1.6, marker="o", ms=3.5, zorder=3,
-            label="mean $\\pm$ 1 SD across subjects" if key == "csp_weight_noise" else None)
+            label="mean $\\pm$ 1 SD across subjects" if is_first else None)
     ax.fill_between(sev, means - stds, means + stds, color="steelblue", alpha=0.18, zorder=2)
     ax.axhline(CHANCE, color="crimson", lw=0.9, ls="--", alpha=0.75, zorder=1,
-               label="chance (0.25)" if key == "csp_weight_noise" else None)
+               label="chance (0.25)" if is_first else None)
     ax.set_title(title)
     ax.set_ylim(0.05, 0.90)
     ax.set_xlim(-0.01, 0.31)
