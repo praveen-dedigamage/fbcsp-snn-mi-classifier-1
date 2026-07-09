@@ -252,11 +252,27 @@ def inject_ea_whitener_noise(
 ) -> Dict:
     """Return a copy of the Euclidean Alignment whitener dict with noise injected.
 
-    The EA whitener (``R^{-1/2}``, per band) is the same mathematical class
-    as the CSP filters — a linear transform / analog crossbar matrix
-    multiply — but was excluded from :func:`inject_csp_filter_noise`'s sweep
-    since it's a separate stored artefact (`PairwiseCSP.ea_whiteners_`, not
-    `PairwiseCSP.filters_`). This closes that gap.
+    Perturbs each whitener's own eigenvalues (its per-direction whitening
+    gain) by a relative amount, rather than its raw matrix entries.
+
+    This is a deliberate redesign, not the original approach: an earlier
+    version perturbed ``R^{-1/2}``'s raw entries directly via
+    :func:`inject_weight_noise_array`, which scales noise by one *global*
+    peak magnitude across the whole matrix. ``R^{-1/2}``'s entries can span
+    a wide dynamic range — directions with a small original covariance
+    eigenvalue get a large inverse-square-root gain — so noise scaled to
+    the global peak is wildly disproportionate for the matrix's smaller,
+    well-conditioned entries, in the same way (and same underlying flaw)
+    that produced the confirmed :func:`~fbcsp_snn.preprocessing.
+    bandpass_filter_noisy` instability bug (see ``PIPELINE_REFERENCE.md``
+    §11a): observed empirically as this sweep collapsing to chance level
+    almost immediately and its spike-event count exploding ~4x, matching
+    the same failure signature. Since ``R^{-1/2}`` is symmetric
+    positive-definite by construction (``PairwiseCSP._compute_ea_whitener``
+    builds it via eigendecomposition), perturbing its own eigenvalues by a
+    relative amount and reconstructing keeps the result symmetric
+    positive-definite — a valid whitening transform — for any noise
+    magnitude, the same "stable by construction" property as the filter fix.
 
     Parameters
     ----------
@@ -264,7 +280,9 @@ def inject_ea_whitener_noise(
         Mapping ``band_idx -> np.ndarray``, as stored in
         :attr:`PairwiseCSP.ea_whiteners_`.
     sigma_frac : float
-        Per-matrix noise std as a fraction of that matrix's peak magnitude.
+        Relative noise std applied independently to each eigenvalue of the
+        whitener: each eigenvalue is redrawn from
+        ``N(nominal, (sigma_frac * nominal)^2)``, clamped to stay positive.
     seed : Optional[int]
         Base RNG seed; incremented per band.
 
@@ -273,13 +291,23 @@ def inject_ea_whitener_noise(
     Dict
         New dict with noise-injected whitener matrices.
     """
+    from scipy.linalg import eigh
+
     noisy: Dict = {}
-    for i, (key, R) in enumerate(ea_whiteners.items()):
+    for i, (key, R_invsqrt) in enumerate(ea_whiteners.items()):
+        if sigma_frac == 0.0:
+            noisy[key] = R_invsqrt.copy()
+            continue
         band_seed = None if seed is None else seed + i
-        noisy[key] = inject_weight_noise_array(R, sigma_frac, seed=band_seed)
+        rng = np.random.default_rng(band_seed)
+        vals, vecs = eigh(R_invsqrt)   # symmetric PD by construction
+        vals = np.maximum(vals, 1e-10)
+        noisy_vals = vals * (1.0 + sigma_frac * rng.standard_normal(vals.shape))
+        noisy_vals = np.maximum(noisy_vals, 1e-10)   # keep positive-definite
+        noisy[key] = ((vecs * noisy_vals) @ vecs.T).astype(R_invsqrt.dtype)
 
     logger.info(
-        "Weight-noise EA whitener: injected sigma_frac=%.4f into %d matrices",
+        "Eigenvalue-noise EA whitener: injected sigma_frac=%.4f into %d matrices",
         sigma_frac, len(ea_whiteners),
     )
     return noisy

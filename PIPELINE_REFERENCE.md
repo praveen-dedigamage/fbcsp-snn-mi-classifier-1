@@ -828,18 +828,49 @@ had never actually been wired into a runnable sweep in `reliability.py` —
 built but unused. Fixed alongside the new adaptation-noise work; both are
 now separate sweeps (`encoder_threshold_noise`, `encoder_adaptation_noise`).
 
-### 11c. Z-normalisation and Euclidean Alignment whitener noise
+### 11c. Z-normalisation and Euclidean Alignment whitener noise — EA whitener REDESIGNED 2026-07-09
 
-Two new functions in `quantization.py`, both thin wrappers around the
-already-verified `inject_weight_noise_array`:
+Two new functions in `quantization.py`:
 - `inject_znorm_noise(mean, std, sigma_frac, seed)` — perturbs
   `ZNormaliser.mean_`/`std_`, std floored at `1e-8` (matching `ZNormaliser.
-  fit`'s own epsilon).
-- `inject_ea_whitener_noise(ea_whiteners, sigma_frac, seed)` — mirrors
-  `inject_csp_filter_noise`'s exact structure (same `Dict[int, np.ndarray]`
-  shape as `PairwiseCSP.ea_whiteners_`). Degrades gracefully to a no-op if a
-  fold's CSP was fit with `euclidean_alignment=False` (empty dict, nothing
-  to perturb, not an error).
+  fit`'s own epsilon). Thin wrapper around `inject_weight_noise_array`, no
+  issue — mean/std are independent per-feature scalars, not a shared matrix
+  with cross-entry dynamic-range problems.
+- `inject_ea_whitener_noise(ea_whiteners, sigma_frac, seed)` — **originally**
+  mirrored `inject_csp_filter_noise`'s exact structure (perturbing
+  `R^{-1/2}`'s raw entries via `inject_weight_noise_array`'s global-peak
+  scaling). **Confirmed buggy 2026-07-09** on the first full reliability run:
+  same failure signature as the filter-bank bug (§11a) — collapsed to
+  chance level almost immediately (0.823→0.282 at just 5% severity, →0.250
+  by 20%) and its spike-event count exploded ~4x (39417→154610 at 30%).
+  Root cause is the same design flaw as §11a, applied to a matrix instead of
+  filter coefficients: `R^{-1/2}`'s entries span a wide dynamic range
+  (small-covariance-eigenvalue directions get a large inverse-square-root
+  gain), so noise scaled to one global peak magnitude across the whole
+  matrix is wildly disproportionate for its smaller, well-conditioned
+  entries. Also confounds `joint_noise_all_sources`, which was collapsing
+  to near-chance by severity 0.05 — dominated by this bug, not a genuine
+  joint-fragility finding.
+
+  **Redesigned**: since `R^{-1/2}` is symmetric positive-definite by
+  construction (`PairwiseCSP._compute_ea_whitener` builds it via
+  eigendecomposition), the fix eigendecomposes the *stored* whitener,
+  perturbs its own eigenvalues by a relative amount
+  (`N(nominal, (sigma_frac×nominal)²)`, clamped to stay positive), and
+  reconstructs. This keeps the result symmetric positive-definite — a valid
+  whitening transform — for any noise magnitude, the same "stable by
+  construction" property as the §11a filter fix, rather than "reject bad
+  draws" or "hope the scaling is small enough." Verified before considering
+  this done: simulated a realistic wide-eigenvalue-spread covariance
+  (0.001–50 range) and stress-tested 200 draws × 4 severities — every draw
+  stayed strictly positive-definite, worst-case peak-magnitude growth only
+  ~1.43× at the highest severity tested (0.3), a mild, bounded, physically
+  plausible amount (versus the old approach's unbounded, matrix-structure-
+  blind corruption).
+
+  Degrades gracefully to a no-op if a fold's CSP was fit with
+  `euclidean_alignment=False` (empty dict, nothing to perturb, not an
+  error) — unchanged by the redesign.
 
 ### 11d. SNN biases
 

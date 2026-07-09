@@ -52,7 +52,56 @@ summary.csv`).
 
 ---
 
-## Reliability sweep — THIRD ATTEMPT PENDING (fix ready, not yet resubmitted)
+## Reliability sweep — FOURTH ATTEMPT PENDING (2nd fix ready, not yet resubmitted)
+
+### Third attempt (job 35411451, 2026-07-09) — completed all 45 tasks, confirmed the filter fix, found one more bug
+
+Ran clean: `find ... | wc -l` → 45, zero tracebacks in any `.err`. Sanity-checked
+`Subject_1/fold_0/reliability_results.json`:
+
+- **`filter_bank_noise` fix confirmed working**: now shows a genuine
+  graceful decline (0.823→0.766→0.691→0.613→0.574 across severities
+  0→0.05→0.1→0.2→0.3), not an instant collapse. Good.
+- **But `ea_whitener_noise` showed the exact same failure signature the
+  filter bank had**: collapse to near-chance almost immediately
+  (0.823→0.282→0.269→0.250→0.250) *and* its event count exploding ~4x
+  (39417→154610). Root cause confirmed to be the same underlying design
+  flaw as §11a, applied to the EA whitener matrix instead of filter
+  coefficients — see `PIPELINE_REFERENCE.md` §11c for the full trace.
+  **Fixed**: `inject_ea_whitener_noise` now perturbs the whitener's own
+  eigenvalues (guaranteed symmetric positive-definite reconstruction) rather
+  than its raw matrix entries. Stress-tested: 200 draws × 4 severities,
+  every draw stayed positive-definite, worst-case peak-magnitude growth
+  only ~1.43× at the highest severity.
+- **`joint_noise_all_sources` was confounded by the same bug** (already
+  near-chance by severity 0.05) — not a genuine joint-fragility finding on
+  its own, since one of its 7 combined sources was broken. Will look
+  different once re-run with the EA fix.
+- Everything else looked plausible: `csp_weight_noise`, `snn_weight_noise`,
+  `beta_noise`, `znorm_noise`, `encoder_adaptation_noise` all show graceful,
+  non-zero-variance declines. `encoder_threshold_noise` is nearly flat
+  (0.823→0.821 across all severities) — plausibly genuine, not obviously a
+  bug: the encoder's threshold evolves via `decay=0.95` every timestep over
+  ~1001 timesteps, so the *initial* threshold value's influence washes out
+  almost completely (`0.95^100 ≈ 0.006`) long before the sequence ends —
+  worth keeping in mind when writing this up, but not treated as suspicious
+  the way the exact-chance/zero-variance pattern was.
+
+**Consequence: none of job 35411451's `ea_whitener_noise` or
+`joint_noise_all_sources` results should be used** (the other 7 sweeps'
+results for this job are fine and don't need to be discarded, but simplest
+to just do one more full resubmit rather than patching together sweeps from
+two different runs).
+
+```
+RESULTS_DIR=Results_verify sbatch run_puhti_reliability.sh
+```
+Once complete, verify with:
+```
+find Results_verify -name "reliability_results.json" | wc -l   # expect 45
+grep -l "Traceback (most recent call last)" logs/fbcsp_rel_*.err   # expect empty (scope to the new job's ID range)
+cat Results_verify/Subject_1/fold_0/reliability_results.json   # check ea_whitener_noise + filter_bank_noise both show graceful declines now
+```
 
 ### Second attempt (job 35408852, 2026-07-09) — right directory, still failed, 2 more problems found
 
@@ -87,17 +136,8 @@ first attempt worked), but failed for two new, unrelated reasons:
 
 **Consequence: none of job 35408852's `reliability_results.json` output
 should be used** — it used the buggy noise model and covered only 4/9
-sweeps. Needs a clean resubmit once the fix is committed and pushed.
-
-```
-RESULTS_DIR=Results_verify sbatch run_puhti_reliability.sh
-```
-Once complete, verify with:
-```
-find Results_verify -name "reliability_results.json" | wc -l   # expect 45
-grep -l "Traceback (most recent call last)" logs/fbcsp_rel_*.err   # expect empty
-cat Results_verify/Subject_1/fold_0/reliability_results.json   # sanity check
-```
+sweeps. Superseded by the third attempt above (job 35411451), which then
+found the EA whitener bug — see there for the current resubmit instructions.
 
 ### First attempt (FAILED 2026-07-08, 2 bugs, both fixed) — for the record
 
