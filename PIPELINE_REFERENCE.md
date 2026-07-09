@@ -740,32 +740,76 @@ User's request: fully back the "analog-circuit-realizable" claim, so the
 noise-injection scope gap flagged after §10 (CSP + SNN weights + beta only)
 needed closing. All five gaps closed, plus one new experiment added on top.
 
-### 11a. Filter bank coefficient noise (the most important gap)
+### 11a. Filter bank coefficient noise (the most important gap) — REDESIGNED 2026-07-09, see below for why
 
 New `bandpass_filter_noisy()`/`apply_filter_bank_noisy()` in
 `preprocessing.py`, added as new functions alongside (not modifying)
 `bandpass_filter()`/`apply_filter_bank()` — the production kernels used by
-every training run stay untouched. Perturbs the `scipy.signal` `sos`
-(second-order-sections) filter design coefficients with noise from
-`quantization.py`'s `inject_weight_noise_array`.
+every training run stay untouched.
 
-**Real bug caught and fixed during implementation, not just planned:**
-naively adding Gaussian noise to the entire `sos` array breaks scipy's
-requirement that column 3 (the `a0` coefficient) stay exactly `1.0` per
-section — `sosfilt` raises `ValueError: sos[:, 3] should be all ones` and
-rejects the array outright. Caught by actually running a numpy/scipy sanity
-check before considering this done (not just compiling). Fixed by
-perturbing only the other 5 columns per section:
+**First design (2026-07-06) — perturbed the `sos` coefficients directly.**
+Perturbed the `scipy.signal` `sos` (second-order-sections) filter design
+coefficients with noise from `quantization.py`'s `inject_weight_noise_array`.
+Caught and fixed a real bug during implementation: naively adding Gaussian
+noise to the entire `sos` array breaks scipy's requirement that column 3
+(the `a0` coefficient) stay exactly `1.0` per section — `sosfilt` raises
+`ValueError: sos[:, 3] should be all ones` and rejects the array outright.
+Fixed by perturbing only the other 5 columns (`[0,1,2,4,5]`).
+
+**That fix was necessary but not sufficient — a deeper, real bug surfaced
+2026-07-09 on the first actual Puhti reliability-sweep run.** Every
+`filter_bank_noise` severity collapsed to *exactly* chance-level accuracy
+(0.2500 ± 0.0000 across all 20 Monte Carlo repeats) starting at the
+mildest severity tested (5%), with `RuntimeWarning: overflow encountered in
+cast` appearing in the same run's logs. Root cause, confirmed empirically
+(not just suspected): `inject_weight_noise_array` scales noise by one
+*global* peak magnitude across all 5 perturbed columns (`b0,b1,b2,a1,a2`)
+combined — for a real band (8–14 Hz, `order=4`), that peak was `2.0` (from
+`b1`), while the *pole margin* (distance from the pole nearest the unit
+circle to actual instability) for one of the four sections was only
+`0.0214`. Noise with std `0.05 × 2.0 = 0.10` — nearly 5× that section's
+entire stability margin — reliably pushed poles outside the unit circle at
+even the lowest severity tested, making the IIR filter unstable. An
+unstable filter's output diverges (explaining the overflow warnings),
+producing garbage features the SNN can't classify — hence the deterministic,
+zero-variance chance-level floor, which is the signature of numerical
+blow-up, not a genuine graceful hardware-noise-sensitivity finding.
+
+**Redesigned, user-directed 2026-07-09: perturb the filter's *design
+parameters* (cutoff frequencies) instead of the discretised `sos`
+coefficients.** `lo`/`hi` are each independently redrawn from
+`N(nominal, (sigma_frac × nominal)²)` *before* calling `butter`/`bessel`,
+which then designs a fresh filter from the noisy cutoffs:
 ```python
-noisy_cols = [0, 1, 2, 4, 5]
-sos[:, noisy_cols] = inject_weight_noise_array(sos[:, noisy_cols], sigma_frac, seed=seed)
+lo = float(lo * (1.0 + sigma_frac * rng.standard_normal()))
+hi = float(hi * (1.0 + sigma_frac * rng.standard_normal()))
 ```
-This is also the physically correct choice, not just a workaround: `a0=1`
-is scipy's normalisation convention, not itself a real component value — the
-true circuit coefficients are the *ratios* of the physical parameters to
-`a0`, so leaving it fixed and perturbing the rest matches what "component
-variation" actually means here. Verified against both Butterworth and
-Bessel filters (both use the same `a0=1` convention) before moving on.
+This is immune to the instability bug **by construction**, not by tuning:
+`scipy.signal.butter`/`bessel` always return a stable filter for any valid
+`0 < lo < hi < nyquist`, so an unstable filter is no longer representable at
+all, regardless of `sigma_frac`. It is also arguably the more physically
+correct model of the underlying non-ideality: real component tolerance in
+an analog Gm-C stage manifests as cutoff-frequency/Q drift, not as
+independent perturbation of six abstract discrete-time coefficients with no
+individual physical component counterpart. Independent `lo`/`hi` draws model
+separate stages/component groups in a cascaded bandpass realisation and
+capture both centre-frequency drift and bandwidth (Q) drift. A `min_gap`
+safety clamp (0.5 Hz) prevents `lo`/`hi` from crossing at extreme severities
+— not a stability concern (already impossible), just keeping the band spec
+well-formed.
+
+**Verified before considering this done**: stress-tested 2000 noisy draws
+across all 6 production bands × severities {0.05, 0.1, 0.2, 0.3} — zero
+unstable filters, worst observed pole margin `0.000955` (still stable). The
+`order` parameter is deliberately not perturbed (a topological property —
+number of stages — not a continuously-tunable analog value). Verified
+against both Butterworth and Bessel filters before moving on.
+
+**Consequence**: `reliability_results.json` from the first Puhti attempt
+(job `35408853` and siblings) used the old, buggy noise model and only
+covered 4/9 sweeps anyway (killed by the separate `--time=00:30:00` limit,
+also fixed — see `RESULTS_LOG.md`). None of that run's results should be
+used; a clean resubmit is required.
 
 ### 11b. Spike encoder: adapt_inc/decay noise (same reasoning as beta)
 

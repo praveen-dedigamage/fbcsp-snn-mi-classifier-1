@@ -170,28 +170,57 @@ def bandpass_filter_noisy(
     sigma_frac: float = 0.0,
     seed: Optional[int] = None,
 ) -> np.ndarray:
-    """Bandpass filter with Gaussian noise injected into the ``sos`` coefficients.
+    """Bandpass filter with noise injected into the design cutoff frequencies.
 
     Models component-value variation (capacitor/transconductance tolerance)
-    in an analog Gm-C realisation of the filter — the same class of
-    non-ideality already tested for CSP/SNN weights
-    (:func:`fbcsp_snn.quantization.inject_weight_noise_array`), applied here
-    to the filter design coefficients instead.
+    in an analog Gm-C realisation of the filter. Perturbs the *design
+    parameters* (the ``lo``/``hi`` cutoff frequencies passed to
+    :func:`scipy.signal.butter`/``bessel``) rather than the resulting
+    discretised ``sos`` coefficients directly.
+
+    This is a deliberate, load-bearing design choice, not an arbitrary one:
+    an earlier version perturbed the ``sos`` coefficients (specifically the
+    ``a1``/``a2`` pole-determining terms) directly with noise scaled to a
+    *global* peak magnitude across all coefficients. Narrowband IIR sections
+    place their poles very close to the unit circle by construction
+    (verified empirically: as close as 0.021 from instability for one of
+    this pipeline's bands at default settings) — noise of that scale pushed
+    poles outside the unit circle, making the filter unstable, and its
+    output diverged (observed as ``RuntimeWarning: overflow encountered in
+    cast`` and every noisy evaluation collapsing to exactly chance-level
+    accuracy with zero variance, the signature of numerical blow-up rather
+    than a genuine graceful-degradation finding). Perturbing the cutoff
+    frequencies instead is immune to this by construction: every draw is
+    still passed through ``butter``/``bessel``, which always returns a
+    stable filter for any valid ``0 < lo < hi < nyquist``, so an unstable
+    filter is no longer representable at all — and it is arguably the more
+    physically accurate model besides, since real component tolerance in an
+    analog Gm-C stage manifests as cutoff-frequency/Q drift, not as
+    independent perturbation of six abstract discrete-time coefficients that
+    have no individual physical component counterpart.
 
     Parameters
     ----------
     X : np.ndarray
         Input data, shape ``(n_trials, n_channels, n_samples)``.
     lo, hi : float
-        Bandpass cutoff frequencies in Hz.
+        Nominal bandpass cutoff frequencies in Hz.
     sfreq : float
         Sampling frequency in Hz.
     order : int
-        Filter order.
+        Filter order. Not perturbed — order is a topological property (an
+        analog design's number of stages), not a continuously-tunable
+        component value.
     filter_type : str
         ``'butterworth'`` or ``'bessel'``.
     sigma_frac : float
-        Noise std as a fraction of the ``sos`` coefficients' peak magnitude.
+        Relative noise std applied independently to each cutoff: each of
+        ``lo``, ``hi`` is redrawn from
+        :math:`\\mathcal{N}(\\text{nominal}, (\\text{sigma\\_frac}\\times
+        \\text{nominal})^2)`. Independent draws model ``lo`` and ``hi``
+        being set by separate stages/component groups in a real cascaded
+        Gm-C bandpass realisation, so this also captures both centre-
+        frequency drift and bandwidth (Q) drift, not just one or the other.
         ``0.0`` reproduces :func:`bandpass_filter` exactly.
     seed : Optional[int]
         RNG seed for reproducibility across Monte Carlo repeats.
@@ -201,7 +230,18 @@ def bandpass_filter_noisy(
     np.ndarray
         Filtered data, same shape as *X*, dtype ``float32``.
     """
-    from fbcsp_snn.quantization import inject_weight_noise_array
+    if sigma_frac > 0.0:
+        rng = np.random.default_rng(seed)
+        lo = float(lo * (1.0 + sigma_frac * rng.standard_normal()))
+        hi = float(hi * (1.0 + sigma_frac * rng.standard_normal()))
+        # Guard against noise crossing/collapsing the band at high severity —
+        # not a stability concern (butter/bessel are stable for any valid
+        # 0 < lo < hi < nyquist), just keeping the band spec well-formed.
+        min_gap = 0.5  # Hz
+        if hi - lo < min_gap:
+            mid = 0.5 * (lo + hi)
+            lo, hi = mid - min_gap / 2.0, mid + min_gap / 2.0
+        lo = max(lo, 0.1)
 
     nyq = sfreq / 2.0
     lo_n = np.clip(lo / nyq, 1e-4, 1.0 - 1e-4)
@@ -211,19 +251,6 @@ def bandpass_filter_noisy(
         sos = bessel(order, [lo_n, hi_n], btype="bandpass", norm="delay", output="sos")
     else:
         sos = butter(order, [lo_n, hi_n], btype="bandpass", output="sos")
-
-    if sigma_frac > 0.0:
-        # scipy's sos format is [b0,b1,b2,a0,a1,a2] per section, with a0
-        # (column 3) *always* normalised to 1.0 by convention — sosfilt
-        # rejects the array otherwise. Physically, a0=1 is a normalisation
-        # of the true circuit coefficients, not itself a component value, so
-        # perturbing only the other 5 columns is both required for validity
-        # and the physically correct choice.
-        noisy_cols = [0, 1, 2, 4, 5]
-        sos = sos.copy()
-        sos[:, noisy_cols] = inject_weight_noise_array(
-            sos[:, noisy_cols], sigma_frac, seed=seed
-        )
 
     n_trials, n_channels, n_samples = X.shape
     X_2d = X.reshape(n_trials * n_channels, n_samples)

@@ -52,7 +52,54 @@ summary.csv`).
 
 ---
 
-## Reliability sweep — FIRST ATTEMPT FAILED 2026-07-08 (2 bugs, both fixed), needs resubmit
+## Reliability sweep — THIRD ATTEMPT PENDING (fix ready, not yet resubmitted)
+
+### Second attempt (job 35408852, 2026-07-09) — right directory, still failed, 2 more problems found
+
+Correctly targeted `RESULTS_DIR=Results_verify` this time (fix from the
+first attempt worked), but failed for two new, unrelated reasons:
+
+1. **`--time=00:30:00` too short.** In 30 minutes, only got through
+   `csp_weight_noise`, `snn_weight_noise`, `beta_noise`, and 3/5 severities
+   of `filter_bank_noise` before `slurmstepd` killed it: `CANCELLED ... DUE
+   TO TIME LIMIT`. `joint_noise_all_sources` (all 7 sources combined,
+   likely the most expensive sweep) never started. **Fixed**: bumped to
+   `--time=02:30:00` in `run_puhti_reliability.sh`, with a comment
+   explaining why.
+2. **Real bug in `filter_bank_noise`, not a hardware-realism finding.**
+   Every severity collapsed to exactly chance level (0.2500 ± 0.0000, zero
+   variance across 20 repeats) starting at the mildest severity (5%), with
+   `RuntimeWarning: overflow encountered in cast` in the same log. Traced
+   to noise being added directly to the `sos` filter's pole-determining
+   coefficients (`a1`/`a2`) at a scale that reliably pushed poles outside
+   the unit circle for narrowband sections (empirically confirmed: one
+   section's pole margin was only `0.0214`, versus a noise std of `0.10` at
+   just 5% severity) — an unstable filter's output diverges, producing
+   garbage the SNN can't classify, which is exactly the deterministic
+   collapse observed. **User-directed fix**: redesigned
+   `bandpass_filter_noisy()` to perturb the filter's *design parameters*
+   (cutoff frequencies) before synthesis instead of the discretised
+   coefficients after — stable by construction (`butter`/`bessel` always
+   return a stable filter for valid cutoffs), and arguably the more
+   physically accurate model of component tolerance besides. Stress-tested
+   2000 draws across all bands/severities: zero unstable filters. Full
+   detail: `PIPELINE_REFERENCE.md` §11a.
+
+**Consequence: none of job 35408852's `reliability_results.json` output
+should be used** — it used the buggy noise model and covered only 4/9
+sweeps. Needs a clean resubmit once the fix is committed and pushed.
+
+```
+RESULTS_DIR=Results_verify sbatch run_puhti_reliability.sh
+```
+Once complete, verify with:
+```
+find Results_verify -name "reliability_results.json" | wc -l   # expect 45
+grep -l "Traceback (most recent call last)" logs/fbcsp_rel_*.err   # expect empty
+cat Results_verify/Subject_1/fold_0/reliability_results.json   # sanity check
+```
+
+### First attempt (FAILED 2026-07-08, 2 bugs, both fixed) — for the record
 
 `sbatch run_puhti_reliability.sh` was run without setting `RESULTS_DIR`
 first. Two problems surfaced:

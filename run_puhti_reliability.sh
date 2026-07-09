@@ -5,7 +5,12 @@
 #SBATCH --gres=gpu:v100:1
 #SBATCH --cpus-per-task=2
 #SBATCH --mem=16G
-#SBATCH --time=00:30:00
+#SBATCH --time=02:30:00
+# 30 min was measured too short 2026-07-09: a real run only got through
+# 4/9 sweeps (csp/snn/beta_noise + 3/5 severities of filter_bank_noise)
+# before hitting the wall. joint_noise_all_sources (all 7 sources, incl.
+# the filter bank) is likely the most expensive sweep and hadn't even
+# started. Bumped generously — pure inference, low GPU-hour cost either way.
 #SBATCH --array=1-45                   # 9 subjects x 5 folds = 45 tasks (match run_puhti_array.sh)
 #SBATCH --output=logs/fbcsp_rel_S%a_%j.out
 #SBATCH --error=logs/fbcsp_rel_S%a_%j.err
