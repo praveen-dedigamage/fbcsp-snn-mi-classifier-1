@@ -82,6 +82,19 @@ the other 44 files exist and have no tracebacks, but haven't been
 individually eyeballed — reasonable to trust given both known failure modes
 are demonstrably fixed and no other subject/fold reported an error.
 
+**Aggregated and written into the paper 2026-07-09**: `aggregate_reliability.py`
+(cross-subject mean±SD across all 9 subjects, matching Table III's
+convention — full command: `python aggregate_reliability.py --results-dir
+Results_verify`). Plotted via `plot_reliability_sweep.py` as a 3×3
+small-multiples figure (2D chosen over a single overlaid plot — 9 sources
+with very different sensitivity profiles would bury the flat ones under the
+steep ones — and over a 3D surface, which is hard to read precisely in a
+static print figure). Output copied to the paper repo's `figures/
+reliability_sweep.pdf`, wired into `main.tex`'s new "Hardware-Realism
+Reliability Sweep" Results subsection. Abstract/Introduction `\TODO{}`
+markers resolved. See `PAPER_REWRITE_NOTES.md` §4 (paper folder) for the
+full write-up and key findings.
+
 ### Third attempt (job 35411451, 2026-07-09) — completed all 45 tasks, confirmed the filter fix, found one more bug
 
 Ran clean: `find ... | wc -l` → 45, zero tracebacks in any `.err`. Sanity-checked
