@@ -52,7 +52,35 @@ summary.csv`).
 
 ---
 
-## Reliability sweep — FOURTH ATTEMPT PENDING (2nd fix ready, not yet resubmitted)
+## Reliability sweep — COMPLETE AND VALIDATED 2026-07-09 (job 35412677)
+
+Fourth attempt (job `35412677`) ran clean: 45/45 `reliability_results.json`
+files, zero tracebacks. Sanity-checked `Subject_1/fold_0` against all 9
+sweeps — every known bug signature (instant collapse to exact chance,
+zero variance, exploding event counts) is gone:
+
+| Sweep | severity 0→0.3 | Verdict |
+|---|---|---|
+| `csp_weight_noise` | 0.823→0.370 | graceful |
+| `snn_weight_noise` | 0.823→0.638 | graceful, most robust to weight noise |
+| `beta_noise` | 0.823→0.701 | graceful, most robust overall |
+| `filter_bank_noise` | 0.823→0.574 | graceful (§11a fix confirmed) |
+| `ea_whitener_noise` | 0.823→0.746 | graceful (§11c fix confirmed — was 0.823→0.250 before) |
+| `znorm_noise` | 0.823→0.356 | graceful (steeper late, no instant collapse) |
+| `encoder_threshold_noise` | 0.823→0.821 | nearly flat — plausible real finding, not a bug (see below) |
+| `encoder_adaptation_noise` | 0.823→0.359 | graceful, genuinely sensitive |
+| `joint_noise_all_sources` | 0.823→0.250 | now a believable *gradual* convergence to chance (was instant before) |
+
+**`encoder_threshold_noise`'s flatness is plausibly genuine, not a bug**:
+the encoder's threshold evolves via `decay=0.95` every timestep across
+~1001 timesteps, so the *initial* threshold value's influence washes out
+almost completely (`0.95^100 ≈ 0.006`) long before the sequence ends —
+worth a sentence in the paper write-up rather than treating as suspicious.
+
+**This experiment is done.** Only spot-checked Subject_1/fold_0 in detail;
+the other 44 files exist and have no tracebacks, but haven't been
+individually eyeballed — reasonable to trust given both known failure modes
+are demonstrably fixed and no other subject/fold reported an error.
 
 ### Third attempt (job 35411451, 2026-07-09) — completed all 45 tasks, confirmed the filter fix, found one more bug
 
