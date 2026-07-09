@@ -754,10 +754,11 @@ def run_aggregate(cfg: Config) -> None:
         "val_acc_fp32", "val_acc_int8",
         "test_acc_fp32", "test_acc_int8", "mean_events_per_trial",
         "mean_input_events_per_trial", "mean_hidden_events_per_trial",
-        "mean_output_events_per_trial",
+        "mean_output_events_per_trial", "n_timesteps",
         "test_acc_csp_8bit", "test_acc_csp_6bit", "test_acc_csp_4bit",
         *joint_fieldnames,
         "val_acc_lda", "test_acc_lda", "val_acc_svm", "test_acc_svm",
+        "svm_best_c", "svm_best_gamma",
     ]
     with open(csv_path, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
@@ -782,6 +783,7 @@ def run_aggregate(cfg: Config) -> None:
         "mean_input_events_per_trial":  round(float(np.mean(_col("mean_input_events_per_trial"))), 3) if _col("mean_input_events_per_trial") else "",
         "mean_hidden_events_per_trial": round(float(np.mean(_col("mean_hidden_events_per_trial"))), 3) if _col("mean_hidden_events_per_trial") else "",
         "mean_output_events_per_trial": round(float(np.mean(_col("mean_output_events_per_trial"))), 3) if _col("mean_output_events_per_trial") else "",
+        "n_timesteps":         round(float(np.mean(_col("n_timesteps"))), 1) if _col("n_timesteps") else "",
         "test_acc_csp_8bit":   round(float(np.mean(_col("test_acc_csp_8bit"))), 6) if _col("test_acc_csp_8bit") else "",
         "test_acc_csp_6bit":   round(float(np.mean(_col("test_acc_csp_6bit"))), 6) if _col("test_acc_csp_6bit") else "",
         "test_acc_csp_4bit":   round(float(np.mean(_col("test_acc_csp_4bit"))), 6) if _col("test_acc_csp_4bit") else "",
@@ -793,6 +795,11 @@ def run_aggregate(cfg: Config) -> None:
         "test_acc_lda":        round(float(np.mean(_col("test_acc_lda"))),  6) if _col("test_acc_lda") else "",
         "val_acc_svm":         round(float(np.mean(_col("val_acc_svm"))),   6) if _col("val_acc_svm")  else "",
         "test_acc_svm":        round(float(np.mean(_col("test_acc_svm"))),  6) if _col("test_acc_svm") else "",
+        # svm_best_c / svm_best_gamma are per-fold categorical hyperparameter
+        # choices (gamma may be a string like "scale") — not meaningful to
+        # average, so the mean row leaves them blank; see per-fold rows.
+        "svm_best_c":          "",
+        "svm_best_gamma":      "",
     }
     with open(csv_path, "a", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")

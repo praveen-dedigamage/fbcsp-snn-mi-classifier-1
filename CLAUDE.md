@@ -28,7 +28,9 @@ Raw EEG (n_trials, n_channels, n_samples)
   │    → binary spike tensor (n_timesteps, n_trials, n_features)
   │
   ├─ Feature selection (MIBIF — mutual information best individual feature)
-  │    → prune to top-K% features
+  │    → adaptive mode: keep features scoring ≥ mi_fraction × max MI score
+  │      (variable count per fold/subject — this is what every real training
+  │      run actually uses; percentile mode is a dormant fallback, see below)
   │
   ├─ 2-layer LIF SNN (snnTorch)
   │    Input → Linear → Dropout → LIF → Linear → Dropout → LIF → Output
@@ -98,7 +100,6 @@ fbcsp-snn-sgd-mi-classifier/
 │   ├── config.py                  ← Config dataclass + argparse CLI
 │   ├── data.py                    ← HDF5 .mat file loader (legacy file source)
 │   ├── datasets.py                ← MOABB dataset registry + loader
-│   ├── band_selection.py          ← Adaptive frequency band selection (Fisher ERD/ERS)
 │   ├── preprocessing.py           ← Bandpass filter, PairwiseCSP (dual-end)
 │   ├── encoding.py                ← Adaptive-threshold spike encoding (JIT)
 │   ├── mibif.py                   ← Mutual information feature selection
@@ -118,19 +119,19 @@ fbcsp-snn-sgd-mi-classifier/
 
 ## Key algorithms — implementation notes
 
-### Adaptive band selection (`band_selection.py`)
-- Welch PSD per trial, averaged across channels → (n_trials, n_freqs)
-- Fisher discriminant ratio at each freq bin: between-class variance / within-class variance
-- Dense candidate bands: 4 Hz wide, 2 Hz step, 4–40 Hz → 17 candidates
-- Score each candidate by integrating Fisher ratio over its passband
-- Greedy selection of top-K with max 50% overlap constraint
-- Returns selected bands + Fisher curve (for plotting)
+### Fixed filter bank (`preprocessing.py`)
+- Six fixed overlapping bands: 4–8, 8–14, 12–18, 16–24, 20–30, 26–40 Hz
+- Same six bands for every subject/fold — no per-trial or per-fold band search.
+  (An earlier design used per-fold adaptive Fisher-discriminant band selection;
+  that module was removed in favour of this fixed bank — see git history around
+  `a9ceddf` if the rationale needs revisiting.)
 
 ### Pairwise CSP dual-end extraction (`preprocessing.py`)
 - For each class pair: solve generalised eigenvalue problem `cov_A W = λ (cov_A + cov_B) W`
 - Take first m AND last m eigenvectors (not just first m) — captures filters maximising
   variance for both class A and class B
-- Default m=2 → 4 filters per pair. With 6 pairs (4-class) and 6 bands = 144 total features
+- Default `csp_components_per_band=8` → m=4 filters/end, 8 filters per pair.
+  With 6 pairs (4-class) and 6 bands = 288 total features (before MIBIF selection)
 - Regularise covariance: `(1-λ)Σ + λI` with λ=0.0001
 
 ### Spike encoding (`encoding.py`)
@@ -154,13 +155,11 @@ fbcsp-snn-sgd-mi-classifier/
 ## Default hyperparameters
 
 ```
-# Band selection
-adaptive_bands: true
-n_adaptive_bands: 6
-bandwidth: 4.0 Hz, step: 2.0 Hz, range: 4–40 Hz
+# Filter bank (fixed, not searched)
+freq_bands: [(4,8),(8,14),(12,18),(16,24),(20,30),(26,40)]  # Hz
 
 # CSP
-csp_components_per_band: 4   (2 from each end)
+csp_components_per_band: 8   (4 from each end)
 lambda_r: 0.0001
 
 # Encoding
@@ -174,13 +173,22 @@ dropout_prob: 0.5
 
 # Training
 lr: 1e-3, weight_decay: 0.1, epochs: 1000
-n_folds: 10, early_stopping_patience: 100
+n_folds: 5, early_stopping_patience: 100, early_stopping_warmup: 100
 spiking_prob: 0.7 (target spike generation)
 
-# Feature selection
+# Feature selection (mi_fraction and feature_percentile are MUTUALLY
+# EXCLUSIVE — mi_fraction takes priority whenever it's set, which is
+# always true in practice; feature_percentile is a dormant fallback
+# mode, never actually exercised by any real training run)
 feature_selection_method: mibif
-feature_percentile: 50.0
+mi_fraction: 0.1        # ACTIVE: keep features scoring >= 10% of max MI score
+feature_percentile: 50.0   # dormant — only used when mi_fraction=None
 ```
+
+Note: `n_folds` defaults to 10 in `Config`'s dataclass, but every actual Puhti
+run (`run_puhti_array.sh`) hardcodes `N_FOLDS=5` and passes `--n-folds 5`
+explicitly — 5 is what every subject in `Results_verify` and the paper's
+tables actually reflects, not the dataclass default.
 
 ## Baseline results to beat
 
@@ -199,8 +207,8 @@ These are from the current pipeline (3 static bands, 22 CSP comps, std-based sel
 | S9 | 72.4% | 70.9% |
 | **Mean** | **64.8%** | **64.5%** |
 
-Target: improve mean accuracy to 70%+ with the adaptive pipeline. Main opportunity is
-the weak subjects (S2, S4, S5, S6) who are near chance level (25% for 4-class).
+Target: improve mean accuracy to 70%+. Main opportunity is the weak subjects
+(S2, S4, S5, S6) who are near chance level (25% for 4-class).
 
 ## Code style
 
@@ -215,11 +223,11 @@ the weak subjects (S2, S4, S5, S6) who are near chance level (25% for 4-class).
 ## Commands
 
 ```bash
-# Train subject 1 with adaptive bands
+# Train subject 1 (defaults to the fixed six-band filter bank)
 python main.py train --source moabb --moabb-dataset BNCI2014_001 \
-    --subject-id 1 --adaptive-bands
+    --subject-id 1
 
-# Train with static bands (fallback)
+# Train with a custom band set (overrides the default)
 python main.py train --source moabb --moabb-dataset BNCI2014_001 \
     --subject-id 1 --freq-bands "[(4,10),(10,14),(14,30)]"
 

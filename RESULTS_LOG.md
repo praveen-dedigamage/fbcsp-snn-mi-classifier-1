@@ -10,6 +10,91 @@ final and copied into the paper.
 
 ---
 
+## Verification retrain — COMPLETE 2026-07-08 (all 9 subjects)
+
+`bash submit_puhti.sh Results_verify` — 9 subjects × 5 folds, code at commit
+`0ca8101` (fully pulled and confirmed before submission).
+
+- Train job: `35390599` (45 tasks)
+- Aggregate jobs (one per subject, each depends only on its own 5 fold tasks):
+  `35390600`–`35390608` (subjects 1–9 respectively)
+- Analyze job: `35390609` (depends on all 9 aggregates) — final summary lands
+  in `logs/fbcsp_analyze_35390609.out`
+
+**What to check once complete:**
+1. `Results_verify/Subject_N/summary.csv`'s `test_acc_fp32`/`test_acc_int8`/
+   `test_acc_csp_{8,6,4}bit` vs. the original `Results/` — should match
+   (regression check, see "What verification actually checks" section below).
+2. `val_acc_lda`/`svm` and `test_acc_lda`/`svm` — expected to differ on
+   purpose (Tier 0 tuning).
+3. New fields now present: `mean_events_per_trial`,
+   `mean_input_events_per_trial`, `mean_hidden_events_per_trial`,
+   `n_timesteps` — no "before" to compare, this is new evidence.
+4. New joint-PTQ fields: `test_acc_joint_csp{8,6,4}_snn{8,6,4}` (9 combos) —
+   also new evidence.
+
+**Outcome, not what was expected going in**: this was NOT a same-pipeline
+regression check. The original `Results/` was generated with a 12-band
+adaptive Fisher-selection front end (`band_selection.py`), which this
+session's own earlier commit `a9ceddf` had already deleted in favour of the
+fixed six-band scheme, without saying so in the commit message. Full
+diagnostic trail and corrected significance-test results (SNN now
+*significantly* beats SVM, no longer significantly beats LDA — a flip from
+before) are in `puhti_logs/Results_verify/` (`BAND_SELECTION_FINDING.md`,
+`ANALYSIS.md`, `SIGNIFICANCE_TEST_RERUN.md`). `main.tex`, `TODO.md`, and
+`PAPER_REWRITE_NOTES.md` (paper folder) have all been updated with the real
+numbers. Schirrmeister2017 needs the same retrain — not done yet.
+
+Unblocked now: `sbatch run_puhti_reliability.sh` (needs these checkpoints)
+and `python compute_energy.py --results-dir Results_verify ...` (needs the
+event-count fields, confirmed present in `Results_verify/Subject_1/
+summary.csv`).
+
+---
+
+## Reliability sweep — FIRST ATTEMPT FAILED 2026-07-08 (2 bugs, both fixed), needs resubmit
+
+`sbatch run_puhti_reliability.sh` was run without setting `RESULTS_DIR`
+first. Two problems surfaced:
+
+1. **Wrong directory, not a code bug.** The script defaults to
+   `RESULTS_DIR="${RESULTS_DIR:-Results}"` — plain `Results`, not
+   `Results_verify`. The job's own startup banner confirmed `Results:
+   Results`. Worse: `Results/Subject_1/fold_0`'s log showed `Filter bank: 3
+   bands` — a *third*, even older pipeline generation (the original
+   3-non-overlapping-band static scheme), different from both the 12-band
+   adaptive pipeline traced in `BAND_SELECTION_FINDING.md` (found via
+   Subject 8) and the current fixed six-band pipeline. `Results/` is an
+   inconsistent grab-bag across subjects from different points in the
+   project's history, not a single coherent snapshot — never use it as a
+   reference again; always pass `RESULTS_DIR=Results_verify` explicitly.
+
+2. **Real bug, now fixed**: `inject_beta_noise` (`fbcsp_snn/quantization.py`)
+   crashed every task on the `beta_noise` sweep with `RuntimeError: Expected
+   all tensors to be on the same device, but found at least two devices,
+   cuda:0 and cpu!`. Root cause: `torch.Generator()` (no `device=` arg) and
+   `torch.randn(n_neurons, generator=gen)` (no `device=` arg) always
+   allocate on CPU, while `lif.beta` lives on the model's device (`cuda:0`
+   on Puhti). This function was written without local CUDA access
+   (documented in its own docstring as unverified) — first real GPU run
+   caught it immediately. Every sibling noise function was audited for the
+   same risk: `inject_csp_filter_noise`/`inject_ea_whitener_noise`/
+   `inject_znorm_noise` are pure numpy (no device concept, safe);
+   `inject_model_weight_noise` and the encoder threshold/adaptation noise
+   functions already correctly derive `device=` from the actual tensor at
+   every call site (established pattern in `inject_weight_noise_tensor`).
+   `inject_beta_noise` was the only offender. Fixed by generating the noise
+   tensor on CPU (unchanged RNG semantics/seeding) then moving it to
+   `nominal.device` before combining.
+
+**Next**: commit + push the fix, `git pull` on Puhti, then resubmit with
+the directory set explicitly this time:
+```bash
+RESULTS_DIR=Results_verify sbatch run_puhti_reliability.sh
+```
+
+---
+
 ## Energy computation — extended, not replaced (2026-07-08)
 
 Discovered mid-session that Puhti already had a real, working

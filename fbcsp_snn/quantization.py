@@ -515,9 +515,10 @@ def inject_beta_noise(
     ----
     Assumes snnTorch's ``Leaky.beta`` accepts a tensor shaped to the neuron
     count, which is documented snnTorch behaviour for heterogeneous/learnable
-    beta. Not verified against an installed snnTorch on this machine (torch/
-    snntorch aren't available locally) — confirm on the first Puhti run
-    before relying on this for published results.
+    beta. Verified on Puhti (GPU): the per-neuron tensor assignment itself
+    works, but the noise tensor originally generated on the default (CPU)
+    device while ``lif.beta`` lives on the model's device — fixed by moving
+    the noise tensor to ``nominal.device`` before combining.
     """
     model_q = copy.deepcopy(model)
     model_q.eval()
@@ -533,7 +534,8 @@ def inject_beta_noise(
             nominal = lif.beta if torch.is_tensor(lif.beta) else torch.full(
                 (n_neurons,), float(lif.beta)
             )
-            noise = torch.randn(n_neurons, generator=gen) * sigma_frac * nominal
+            noise = torch.randn(n_neurons, generator=gen).to(nominal.device)
+            noise = noise * sigma_frac * nominal
             lif.beta = (nominal + noise).clamp(0.01, 0.999)
 
     return model_q
