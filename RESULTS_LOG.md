@@ -234,6 +234,22 @@ SUBJECTS="2 3 4 7 12" bash submit_schirrmeister.sh Results_schirrmeister_verify
 (uses the new `16:00:00` default; override with `SBATCH_TIME=` if a
 different value is ever needed).
 
+### Third attempt — launched 2026-07-11, job `35426603`
+
+All 25 tasks (array indices `6-10,11-15,16-20,31-35,56-60`, matching the 5
+subjects exactly) went straight to `R` (running) immediately — no `PD`
+queuing, confirming Puhti doesn't impose a per-project concurrent-GPU cap
+that would force these to wait their turn. Spread across more distinct
+physical nodes than attempt 2 (`r13g02`, `r02g02`, `r02g03`, `r02g06`,
+`r03g01`, `r15g01`, `r16g03`, `r01g03`, `r04g01`, `r01g06`, `r01g07`,
+`r04g08`, `r04g07`, `r15g04`, `r15g05` — some still share, e.g. `r04g01`
+hosts 3 tasks, but nothing like attempt 2's 4-per-node clustering). Uses
+the new `16:00:00` default. Decided to leave the training-time RNG unseeded
+for this campaign (see the "no `torch.manual_seed`" finding above) — will
+revisit seeding only after the full experimental campaign (remaining
+ablations, Cho2017, BNCI2015-001, this resubmit) is complete, so it doesn't
+create an inconsistency between already-collected and future results.
+
 ---
 
 ## Verification retrain — COMPLETE 2026-07-08 (all 9 subjects)
