@@ -36,8 +36,12 @@ fi
 export SUBJECTS
 
 # 500 Hz × ~4 s epoch → ~2000 samples. Riemannian mean on 128×128 is
-# compute-intensive; request 4-hour wall time to be safe.
-export SBATCH_TIME="4:00:00"
+# compute-intensive. 4-hour budget was measured too short 2026-07-10:
+# 8 of 70 tasks (9 subjects x 5 folds -- 5 distinct subjects affected)
+# hit TIMEOUT at exactly 4:00:17, and several *completed* tasks came
+# within ~15 min of the limit too, so this wasn't just one outlier
+# subject. Doubled to 8 hours.
+export SBATCH_TIME="8:00:00"
 
 echo "=============================================="
 echo "  FBCSP-SNN — Schirrmeister2017 cross-dataset run"

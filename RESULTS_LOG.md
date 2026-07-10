@@ -10,6 +10,72 @@ final and copied into the paper.
 
 ---
 
+## Schirrmeister2017 retrain — PARTIAL, 5 of 14 subjects need resubmit (2026-07-10)
+
+`bash submit_schirrmeister.sh Results_schirrmeister_verify` (job `35414792`
+training array, 70 tasks = 14 subjects × 5 folds; `35414793`–`35414806`
+per-subject aggregates; `35414807` analyze).
+
+**Result**: 8 of 70 training tasks hit `TIMEOUT` at exactly `04:00:17` —
+the 4-hour wall-time budget, not a code crash or OOM kill (confirmed via
+`sacct -j 35414792 --format=JobID,State,ExitCode,Elapsed,MaxRSS -X`, which
+shows `State=TIMEOUT` explicitly, distinct from `FAILED`/`OUT_OF_MEMORY`).
+Mapped task IDs back to (subject, fold) via `task = (S-1)*5 + fold + 1`:
+
+| Subject | Timed-out folds | Aggregate (`sacct`) |
+|---|---|---|
+| S2  | fold 2 (1/5)          | CANCELLED |
+| S3  | fold 3 (1/5)          | CANCELLED |
+| S4  | folds 0,1,2,4 (4/5)   | CANCELLED |
+| S7  | fold 2 (1/5)          | CANCELLED |
+| S12 | fold 3 (1/5)          | CANCELLED |
+
+The other 9 subjects (S1, S5, S6, S8, S9, S10, S11, S13, S14) completed all
+5 folds cleanly — `sacct` shows `COMPLETED, ExitCode=0:0` throughout, no
+resubmit needed for those. Because each subject's aggregate job depends
+(`afterok`) on all 5 of its own fold tasks, one timeout was enough to
+cancel that subject's aggregate — which cascaded to cancel the final
+analyze job (`35414807`) too, since *it* depends on all 14 aggregates.
+
+Worth noting: even the tasks that *did* complete ranged up to `03:44:26`
+elapsed — several came within ~15 minutes of the 4-hour limit, so this
+wasn't just one pathological subject (though S4 losing 4/5 folds stands
+out). Consistent with the risk flagged before this run: Riemannian mean
+convergence at 128×128 (vs. the 22×22 case already validated on
+BNCI2014-001) is genuinely slower for a meaningful fraction of
+subject/fold combinations, not just S4.
+
+**Fixed**: `submit_schirrmeister.sh`'s `SBATCH_TIME` doubled from `4:00:00`
+to `8:00:00` (was hardcoded via `export`, so an external env var override
+wouldn't have worked without editing the script itself).
+
+**Resubmit — only the 5 affected subjects, no need to redo the other 9**:
+```bash
+git pull
+SUBJECTS="2 3 4 7 12" bash submit_schirrmeister.sh Results_schirrmeister_verify
+```
+`submit_schirrmeister.sh` respects a pre-set `SUBJECTS` env var and skips
+its own default `seq 1 14` generation, so this correctly scopes to just
+these 5 (confirmed by reading the script, not assumed). Note this will
+harmlessly re-run all 5 folds for each of these subjects (including the
+ones that already completed, e.g. S2's folds 0,1,3,4) since
+`submit_puhti.sh` builds per-subject fold arrays as a whole block, not at
+individual-fold granularity — wasted compute is small relative to the
+whole run, not worth the fragility of trying to cherry-pick individual
+folds instead.
+
+**Important — the automatic analyze step from this resubmission will only
+cover these 5 subjects**, since `submit_puhti.sh`'s dependency chain is
+built from the `SUBJECTS` list passed to it. Once this resubmission's
+aggregates all show `COMPLETED`, trigger the real, full 14-subject analyze
+manually:
+```bash
+RESULTS_DIR=Results_schirrmeister_verify SUBJECTS="1 2 3 4 5 6 7 8 9 10 11 12 13 14" \
+    sbatch run_puhti_analyze.sh
+```
+
+---
+
 ## Verification retrain — COMPLETE 2026-07-08 (all 9 subjects)
 
 `bash submit_puhti.sh Results_verify` — 9 subjects × 5 folds, code at commit
