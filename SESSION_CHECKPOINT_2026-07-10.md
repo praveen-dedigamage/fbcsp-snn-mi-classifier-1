@@ -5,7 +5,7 @@ is just an index so nothing gets lost or re-derived incorrectly after
 compaction. Full detail for each item lives in the files referenced, not
 duplicated here.
 
-## Code repo — committed and pushed, HEAD = `233a83c`
+## Code repo — committed and pushed, HEAD = `75d2a9d`
 
 In order, this session (see `git log --oneline` for the full list):
 1. `caac3b8` — fixed `inject_beta_noise` CUDA/CPU device mismatch.
@@ -24,6 +24,10 @@ In order, this session (see `git log --oneline` for the full list):
 5. `0dd3714`, `233a83c` — energy computation completed (Lava/SLAYER
    simulation + cross-check against this codebase's own B15 instrumentation),
    written into the paper, raw terminal output logged.
+
+6. `75d2a9d` — Schirrmeister2017's first attempt (job `35414792`) hit
+   `TIMEOUT` on 8/70 tasks (5 subjects affected); doubled
+   `submit_schirrmeister.sh`'s wall-time 4h→8h and logged the diagnosis.
 
 **Full narrative and exact numbers**: `RESULTS_LOG.md` (this repo).
 **Raw data, independent of any summary**: `puhti_logs/Results_verify/`
@@ -57,15 +61,17 @@ folder.
 
 ## Open items — genuinely unresolved, not just undocumented
 
-1. **Schirrmeister2017 retrain — status UNCONFIRMED.** Command given
-   (`bash submit_schirrmeister.sh Results_schirrmeister_verify`) but the
-   user has not yet pasted back `squeue` output or confirmed it was
-   actually submitted. Table IV's numbers (58.8/47.5/64.8%) remain stale
-   (adaptive-band pipeline, same root cause as B23) until this runs.
-   Compatibility was checked (not just assumed) — no confirmed blocker,
-   but Riemannian mean convergence at 128×128 (vs. the 22×22 case already
-   validated) is genuininely untested under the current codebase. Read the
-   actual logs carefully when this comes back, don't assume success.
+1. **Schirrmeister2017 retrain — PARTIAL, 5 of 14 subjects need resubmit.**
+   First attempt (job `35414792`) confirmed the exact risk flagged before
+   running it: 8/70 tasks hit `TIMEOUT` at the 4-hour limit (Riemannian
+   mean at 128×128 genuinely slower than the validated 22×22 case), 9
+   subjects completed cleanly, 5 (S2,S3,S4,S7,S12) need a resubmit.
+   `submit_schirrmeister.sh`'s wall-time doubled to 8h (committed
+   `75d2a9d`). Resubmit command and the required manual full-14-subject
+   analyze step (the automatic one from a partial resubmit will only cover
+   the 5 subjects) are both in `RESULTS_LOG.md`'s new top section — not
+   yet run as of this checkpoint. Table IV's numbers (58.8/47.5/64.8%)
+   remain stale until the full 14-subject analyze completes.
 2. **Evaluation-protocol description may not match the code — not yet
    investigated.** `main.tex`'s "Evaluation Protocol" subsection states
    *"For single-session datasets (Schirrmeister2017, Cho2017,
