@@ -121,16 +121,70 @@ materially worse outcome than the first attempt (62/70 completed in under
 4h) despite doubled wall-time — because these are precisely the 5 subjects
 whose folds run closer to the slow end of the per-epoch-cost distribution.
 
-**Open puzzle, not yet resolved**: task 6 (subject 2, fold 0) completed in
-just **2h40min** (`wall time 9610.6s`) during the *first* attempt
-(`fbcsp_snn_S6_35414813.out`), yet the *identical* subject/fold timed out
-past 8h in this resubmission. Preprocessing is deterministic
-(`StratifiedKFold random_state=42`), but nothing in `training.py` appears to
-seed the SNN's own training-time randomness (weight init, dropout), so
-re-running the same fold can converge at very different speeds by chance —
-plausible explanation, not yet verified by reading `training.py` directly.
-Worth a closer look for reproducibility's sake, but orthogonal to getting
-Schirrmeister2017's numbers in.
+**Attempt 1 vs attempt 2, fold by fold** — 17 of these 25 folds passed
+comfortably (under 4h) in attempt 1, yet every single one failed in
+attempt 2 (over 8h), not just the 8 that were already known-slow:
+
+| Subject | Fold | Attempt 1 (`35414792`) | Attempt 2 (`35421109`) |
+|---|---|---|---|
+| S2  | 0 | PASS | FAIL |
+| S2  | 1 | PASS | FAIL |
+| S2  | 2 | FAIL | FAIL |
+| S2  | 3 | PASS | FAIL |
+| S2  | 4 | PASS | FAIL |
+| S3  | 0 | PASS | FAIL |
+| S3  | 1 | PASS | FAIL |
+| S3  | 2 | PASS | FAIL |
+| S3  | 3 | FAIL | FAIL |
+| S3  | 4 | PASS | FAIL |
+| S4  | 0 | FAIL | FAIL |
+| S4  | 1 | FAIL | FAIL |
+| S4  | 2 | FAIL | FAIL |
+| S4  | 3 | PASS | FAIL |
+| S4  | 4 | FAIL | FAIL |
+| S7  | 0 | PASS | FAIL |
+| S7  | 1 | PASS | FAIL |
+| S7  | 2 | FAIL | FAIL |
+| S7  | 3 | PASS | FAIL |
+| S7  | 4 | PASS | FAIL |
+| S12 | 0 | PASS | FAIL |
+| S12 | 1 | PASS | FAIL |
+| S12 | 2 | PASS | FAIL |
+| S12 | 3 | FAIL | FAIL |
+| S12 | 4 | PASS | FAIL |
+
+**Root-caused, not just hypothesised**: task 6 (subject 2, fold 0)
+completed in just **2h40min** (`wall time 9610.6s`) during the *first*
+attempt (`fbcsp_snn_S6_35414813.out`), yet the *identical* subject/fold
+timed out past 8h in this resubmission — and the same holds for 16 other
+previously-passing folds. Confirmed via
+`grep -rn "manual_seed\|torch.seed\|np.random.seed\|default_rng"
+fbcsp_snn/training.py fbcsp_snn/model.py fbcsp_snn/pipeline.py` — **no
+matches**. There is no `torch.manual_seed()` anywhere in the training path;
+model weight init and dropout are governed by whatever the global PyTorch
+RNG state happens to be at that moment. Data splits are deterministic
+(`StratifiedKFold random_state=42`) but training-time convergence speed is
+not — re-running the identical fold can converge at a very different speed
+by pure chance, explaining why a fold that plateaued in ~200 epochs one run
+can need close to the full 1000-epoch cap the next. This is a pre-existing
+property of the codebase (not introduced by anything this session touched —
+verified no training-path files were modified this session, see below).
+**Decision (2026-07-11): leave the training seed unset for now** — not
+changing it, this is orthogonal to getting Schirrmeister2017's numbers in
+and changing it would be a methodology call affecting reproducibility
+framing elsewhere in the paper.
+
+**Confirmed none of this session's changes touch the training path.**
+Every file touched this session (`git log --name-only`) is either docs, or
+one of `preprocessing.py`'s `bandpass_filter_noisy`,
+`quantization.py`'s `inject_ea_whitener_noise`, `plot_reliability_sweep.py`,
+`aggregate_reliability.py`, `submit_puhti.sh` (`ARRAY_THROTTLE`), or
+`submit_schirrmeister.sh` (`SBATCH_TIME`). Grepped every caller of the
+noisy-variant functions — all are in `reliability.py` only;
+`pipeline.py` (the actual `run_train` path) calls the plain
+`apply_filter_bank`, never the `_noisy` variant. The only change touching
+this run at all is the `SBATCH_TIME` wall-clock bump, which can only help
+completion, not hurt it.
 
 Tried an emergency time-limit extension on the running tasks as a long
 shot before they died:
