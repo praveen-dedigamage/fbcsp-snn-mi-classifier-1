@@ -80,80 +80,82 @@ RESULTS_DIR=Results_schirrmeister_verify SUBJECTS="1 2 3 4 5 6 7 8 9 10 11 12 13
 → job `35421109`, 25 tasks, array indices `6-10,11-15,16-20,31-35,56-60`
 (matches `task=(S-1)*5+fold+1` for these 5 subjects exactly).
 
-**Symptom**: several hours in, log tails showed 8 tasks (S6,S9,S19,S31,S32,
-S34,S56,S57) with *zero* Python log lines beyond the SBATCH startup banner,
-and multi-hour gaps between SLURM `Start:` time and the first Python log
-line on others (e.g. S13: started 15:35:38, "GPU:" line not until 21:40:02
-— 6h+ later), plus further ~1h gaps between the "GPU:" line and `run_train`
-actually beginning (S17, S33, S58, S59). Not a crash — tasks simply not
-progressing.
+**Symptom (initial, later corrected)**: several hours in, checking log tails
+via `logs/fbcsp_snn_S*_35421109.out` appeared to show 8 tasks (S6, S9, S19,
+S31, S32, S34, S56, S57) with *zero* Python log lines. This glob was wrong —
+the array script's `--output=logs/fbcsp_snn_S%a_%j.out` uses `%j`, which for
+array jobs is each task's own unique per-task SLURM job ID, not the shared
+`%A` master array ID (`35421109`). Only the one task that happened to
+inherit the master ID as its own ID matched (`S60`); the "zero output" for
+the other 8 was an artifact of looking for files that used a different,
+correct suffix — not evidence those tasks were stuck. Corrected glob:
+`logs/fbcsp_snn_S{6,9,19,31,32,34,56,57}_*.out`.
 
-**Diagnosis**: `squeue` showed multiple tasks sharing single physical nodes
-(e.g. 4 tasks on `r02g08`). Confirmed via `scontrol show node r02g08`:
+**First (wrong) diagnosis**: hypothesised node-level filesystem/I-O
+contention, based on `scontrol show node r02g08` showing 4 of our tasks
+packed onto one 4-GPU node with surprisingly low `CPULoad=3.01` against 16
+allocated CPUs. This data point is real but turned out not to be the
+relevant story — see below.
 
-```
-CPUAlloc=16 CPUEfctv=40 CPUTot=40 CPULoad=3.01
-Gres=gpu:v100:4(S:0-1),nvme:3600
-CfgTRES=cpu=40,mem=382000M,billing=40,gres/gpu:v100=4,gres/nvme=3600
-AllocTRES=cpu=16,mem=192G,gres/gpu:v100=4
-```
+**Actual diagnosis, confirmed by re-running the corrected glob and by
+`sacct`**: every one of the previously-"stuck" tasks was making genuine,
+healthy progress — identical trajectory to `S60` (CSP fit through all 6
+bands by ~22:33-22:36, baselines by ~22:38-22:41, MIBIF by ~22:51-22:57,
+model built by ~22:53-22:59, first logged checkpoint `epoch 50/1000` by
+~23:20-23:29 on every single task, across 12+ different physical nodes).
+Per-epoch cost is a consistent **~30-36 sec/epoch** — confirmed
+independently by an unrelated, older `S34` log from a completely different
+prior job showing the same ~24-29 sec/epoch rate. With `epochs=1000`,
+`warmup=100`, `patience=100`, a fold whose val accuracy keeps slowly
+improving (resetting patience) can need close to the full 1000-epoch cap —
+**~9-10 hours of training alone**, before even counting ~50-60 min of
+preprocessing. The 8h budget was still marginal, not because of node
+contention, but because per-epoch cost times the epoch budget can
+genuinely exceed it.
 
-Node has 4 GPUs; all 4 are allocated, each to one of our tasks (4×4 cpus =
-16 = `CPUAlloc`, 4×48G = 192G = allocated mem) — confirms 4 tasks genuinely
-share this node. But `CPULoad=3.01` against 16 allocated CPUs is low — if
-tasks were CPU-bound (e.g. all 4 doing Riemannian-mean linear algebra at
-once), load would sit much closer to 16. A load this low means the
-processes are mostly idle/blocked, not computing. This points at I/O or
-filesystem contention (concurrent package imports and/or MOABB/MNE cache
-access from many tasks hitting the same shared scratch filesystem at once)
-rather than pure CPU contention or an inherently slower algorithm at
-128×128 — revising the original hypothesis from the first attempt.
+**Final outcome — confirmed via `sacct`**: **all 25/25 training tasks
+`TIMEOUT`'d** at 08:00:0x-08:00:2x elapsed (exit code `0:0`, i.e. killed by
+the wall-time limit, not a crash), and all 5 subject aggregates +
+the final analyze job (`35421110`-`35421115`) show `CANCELLED`. This is a
+materially worse outcome than the first attempt (62/70 completed in under
+4h) despite doubled wall-time — because these are precisely the 5 subjects
+whose folds run closer to the slow end of the per-epoch-cost distribution.
 
-**Decision (2026-07-10)**: let the run ride rather than cancel the 8
-stalled tasks — some tasks in this same batch are genuinely progressing
-(e.g. S3 already into `run_train`), and cancelling would lose that progress
-for an 8h-budget job. Re-check status once the 8h wall-time window is
-closer to expiring; if tasks that showed zero progress are still stuck
-near the limit, they will most likely hit `TIMEOUT` again and need a
-throttled resubmit (e.g. `--array=...%N` to cap concurrency and avoid
-saturating the shared filesystem) — not a further wall-time increase, since
-the bottleneck now looks I/O-bound rather than compute-bound.
+**Open puzzle, not yet resolved**: task 6 (subject 2, fold 0) completed in
+just **2h40min** (`wall time 9610.6s`) during the *first* attempt
+(`fbcsp_snn_S6_35414813.out`), yet the *identical* subject/fold timed out
+past 8h in this resubmission. Preprocessing is deterministic
+(`StratifiedKFold random_state=42`), but nothing in `training.py` appears to
+seed the SNN's own training-time randomness (weight init, dropout), so
+re-running the same fold can converge at very different speeds by chance —
+plausible explanation, not yet verified by reading `training.py` directly.
+Worth a closer look for reproducibility's sake, but orthogonal to getting
+Schirrmeister2017's numbers in.
 
-**Outcome — confirmed worse than a partial timeout.** Checked `squeue`
-again near the 8h mark: all 25 tasks still `R` (running), TIME ranging
-7:36:13–7:50:17 elapsed of the 8:00:00 budget, **zero completions**, and
-all 6 pending aggregate/analyze jobs (`35421110`–`35421115`) still
-`PD (Dependency)` — meaning no subject had all 5 folds done. This is a
-materially worse outcome than the first attempt, which completed 62/70
-tasks in under 4h. Tried an emergency time-limit extension as a long shot:
-
+Tried an emergency time-limit extension on the running tasks as a long
+shot before they died:
 ```bash
 scontrol update JobId=35421109_<tid> TimeLimit=16:00:00
 ```
-
 Rejected for every task (`Access/permission denied`) — CSC Puhti does not
-allow users to extend a running job's own wall-time. Nothing further to do
-for this batch; expect all/most of these 25 tasks to hit `TIMEOUT` at
-8:00:00 and the 5 subject aggregates + final analyze to cascade-cancel
-again, same as the first attempt.
+allow users to extend a running job's own wall-time.
 
-**Fixed for the next resubmit**: added an `ARRAY_THROTTLE` env var to
-`submit_puhti.sh` (appends `%N` to the sbatch `--array=` spec, capping how
-many array tasks run concurrently — SLURM applies this limit across the
-whole array, not per subject range). Root cause is very likely concurrent
-tasks starving each other on a shared filesystem (package imports and/or
-MOABB/MNE cache access) when 25 tasks all launch at once, not a per-task
-slowdown — so throttling concurrency, not adding more wall-time, is the
-fix to try next. Next resubmit for these 5 subjects:
-
+**Fix for the next resubmit**: given per-epoch cost, not concurrency, is the
+real constraint, the next resubmit needs a much larger wall-time budget
+(not `ARRAY_THROTTLE`, which remains available in `submit_puhti.sh` as a
+general safety valve but wasn't the actual bottleneck here). Check the
+`gpu` partition's actual max wall-time before resubmitting
+(`sinfo -p gpu -o "%P %l"`), then:
 ```bash
 git pull
-ARRAY_THROTTLE=5 SUBJECTS="2 3 4 7 12" bash submit_schirrmeister.sh Results_schirrmeister_verify
+SUBJECTS="2 3 4 7 12" SBATCH_TIME=<partition max, e.g. 16:00:00 or more> \
+    bash submit_schirrmeister.sh Results_schirrmeister_verify
 ```
-
-`5` is a starting guess (roughly one task per node-worth of GPUs seen in
-this run, e.g. `r02g08`/`r13g08`/`r13g06` each hosting up to 4); lower it
-further (e.g. 3) if the same stalling pattern recurs.
+(`submit_schirrmeister.sh` currently hardcodes `SBATCH_TIME=8:00:00` via
+`export` inside the script, which overrides any external env var of the
+same name — will need a direct edit to whatever value the partition allows,
+not just an env var override, unless the script is changed to respect a
+pre-set value first.)
 
 ---
 

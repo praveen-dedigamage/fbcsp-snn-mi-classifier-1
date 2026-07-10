@@ -40,13 +40,17 @@ if [ -z "${SUBJECTS:-}" ]; then
 fi
 export SUBJECTS
 
-# 500 Hz × ~4 s epoch → ~2000 samples. Riemannian mean on 128×128 is
-# compute-intensive. 4-hour budget was measured too short 2026-07-10:
-# 8 of 70 tasks (9 subjects x 5 folds -- 5 distinct subjects affected)
-# hit TIMEOUT at exactly 4:00:17, and several *completed* tasks came
-# within ~15 min of the limit too, so this wasn't just one outlier
-# subject. Doubled to 8 hours.
-export SBATCH_TIME="8:00:00"
+# 500 Hz x ~4 s epoch -> ~2000 timesteps, 2x BNCI2014-001's ~1001 -> every
+# SNN forward/backward pass costs roughly 2x. Measured ~30-36 sec/epoch on
+# 2026-07-10; with epochs=1000/patience=100, a fold that doesn't plateau
+# quickly can need close to the full epoch cap (~9-10h training alone).
+# 4h (first attempt) and 8h (second attempt) both proved insufficient --
+# 8/70 tasks TIMEOUT at 4h, then all 25/25 resubmitted tasks TIMEOUT at 8h
+# (see RESULTS_LOG.md). Bottleneck is per-epoch compute cost, not node
+# contention -- bumping this further, not ARRAY_THROTTLE, is the fix.
+# Respect a pre-set SBATCH_TIME (e.g. from the caller's environment)
+# instead of always overriding it.
+export SBATCH_TIME="${SBATCH_TIME:-8:00:00}"
 
 echo "=============================================="
 echo "  FBCSP-SNN — Schirrmeister2017 cross-dataset run"
