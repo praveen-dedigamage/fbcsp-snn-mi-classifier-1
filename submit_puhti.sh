@@ -16,6 +16,9 @@
 # Override subject list:
 #   SUBJECTS="1 2 3"   — space-separated subject IDs (default: 1..9)
 #
+# Throttle concurrent tasks (avoid shared-node I/O contention):
+#   ARRAY_THROTTLE=5   — e.g. ARRAY_THROTTLE=5 bash submit_puhti.sh ...
+#
 # Each experiment writes to its own RESULTS_DIR so parallel runs
 # never overwrite each other.
 #
@@ -48,6 +51,16 @@ SUBJECTS="${SUBJECTS:-1 2 3 4 5 6 7 8 9}"
 
 # Optional wall-time override — e.g. SBATCH_TIME=4:00:00 for 512 Hz datasets
 SBATCH_TIME="${SBATCH_TIME:-}"
+
+# Optional concurrency throttle — e.g. ARRAY_THROTTLE=5 caps the array to 5
+# concurrently-running tasks. Use this when many tasks packed onto a shared
+# node/filesystem slow every task down (I/O or import contention), not when
+# tasks are just individually slow — that's a wall-time problem instead.
+# Confirmed necessary 2026-07-10: Schirrmeister2017 resubmit (25 tasks, all
+# launched at once) hit 0/25 completions at 7:50 elapsed of an 8h budget,
+# vs. 62/70 completing under 4h when submitted as part of the original,
+# less-parallel 70-task batch.
+ARRAY_THROTTLE="${ARRAY_THROTTLE:-}"
 
 echo "RESULTS_DIR:  ${RESULTS_DIR}"
 echo "ARRAY_SCRIPT: ${ARRAY_SCRIPT}"
@@ -90,6 +103,10 @@ for S in ${SUBJECTS}; do
     ARRAY_TASKS="${ARRAY_TASKS:+${ARRAY_TASKS},}${START}-${END}"
 done
 echo "Array tasks: ${ARRAY_TASKS}"
+if [ -n "${ARRAY_THROTTLE}" ]; then
+    ARRAY_TASKS="${ARRAY_TASKS}%${ARRAY_THROTTLE}"
+    echo "Concurrency throttle: max ${ARRAY_THROTTLE} tasks running at once"
+fi
 echo ""
 
 ENCODER_TYPE="${ENCODER_TYPE:-delta}"

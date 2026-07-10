@@ -18,6 +18,11 @@
 #   bash submit_schirrmeister.sh                              # subjects 1-14
 #   bash submit_schirrmeister.sh Results_schirrmeister 5     # subjects 1-5
 #   SUBJECTS="1 2 3" bash submit_schirrmeister.sh            # specific subjects
+#
+# If many tasks are submitted at once (e.g. a multi-subject resubmit), cap
+# concurrency to avoid shared-node/filesystem I/O contention slowing every
+# task down (confirmed 2026-07-10 — see RESULTS_LOG.md):
+#   ARRAY_THROTTLE=5 SUBJECTS="2 3 4 7 12" bash submit_schirrmeister.sh ...
 # ============================================================
 
 set -euo pipefail

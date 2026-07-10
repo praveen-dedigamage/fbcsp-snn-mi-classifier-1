@@ -119,6 +119,42 @@ throttled resubmit (e.g. `--array=...%N` to cap concurrency and avoid
 saturating the shared filesystem) — not a further wall-time increase, since
 the bottleneck now looks I/O-bound rather than compute-bound.
 
+**Outcome — confirmed worse than a partial timeout.** Checked `squeue`
+again near the 8h mark: all 25 tasks still `R` (running), TIME ranging
+7:36:13–7:50:17 elapsed of the 8:00:00 budget, **zero completions**, and
+all 6 pending aggregate/analyze jobs (`35421110`–`35421115`) still
+`PD (Dependency)` — meaning no subject had all 5 folds done. This is a
+materially worse outcome than the first attempt, which completed 62/70
+tasks in under 4h. Tried an emergency time-limit extension as a long shot:
+
+```bash
+scontrol update JobId=35421109_<tid> TimeLimit=16:00:00
+```
+
+Rejected for every task (`Access/permission denied`) — CSC Puhti does not
+allow users to extend a running job's own wall-time. Nothing further to do
+for this batch; expect all/most of these 25 tasks to hit `TIMEOUT` at
+8:00:00 and the 5 subject aggregates + final analyze to cascade-cancel
+again, same as the first attempt.
+
+**Fixed for the next resubmit**: added an `ARRAY_THROTTLE` env var to
+`submit_puhti.sh` (appends `%N` to the sbatch `--array=` spec, capping how
+many array tasks run concurrently — SLURM applies this limit across the
+whole array, not per subject range). Root cause is very likely concurrent
+tasks starving each other on a shared filesystem (package imports and/or
+MOABB/MNE cache access) when 25 tasks all launch at once, not a per-task
+slowdown — so throttling concurrency, not adding more wall-time, is the
+fix to try next. Next resubmit for these 5 subjects:
+
+```bash
+git pull
+ARRAY_THROTTLE=5 SUBJECTS="2 3 4 7 12" bash submit_schirrmeister.sh Results_schirrmeister_verify
+```
+
+`5` is a starting guess (roughly one task per node-worth of GPUs seen in
+this run, e.g. `r02g08`/`r13g08`/`r13g06` each hosting up to 4); lower it
+further (e.g. 3) if the same stalling pattern recurs.
+
 ---
 
 ## Verification retrain — COMPLETE 2026-07-08 (all 9 subjects)
