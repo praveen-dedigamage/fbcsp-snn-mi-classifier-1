@@ -74,6 +74,51 @@ RESULTS_DIR=Results_schirrmeister_verify SUBJECTS="1 2 3 4 5 6 7 8 9 10 11 12 13
     sbatch run_puhti_analyze.sh
 ```
 
+### Resubmission (job `35421109`) — severe stalls, node-contention diagnosed
+
+`SUBJECTS="2 3 4 7 12" bash submit_schirrmeister.sh Results_schirrmeister_verify`
+→ job `35421109`, 25 tasks, array indices `6-10,11-15,16-20,31-35,56-60`
+(matches `task=(S-1)*5+fold+1` for these 5 subjects exactly).
+
+**Symptom**: several hours in, log tails showed 8 tasks (S6,S9,S19,S31,S32,
+S34,S56,S57) with *zero* Python log lines beyond the SBATCH startup banner,
+and multi-hour gaps between SLURM `Start:` time and the first Python log
+line on others (e.g. S13: started 15:35:38, "GPU:" line not until 21:40:02
+— 6h+ later), plus further ~1h gaps between the "GPU:" line and `run_train`
+actually beginning (S17, S33, S58, S59). Not a crash — tasks simply not
+progressing.
+
+**Diagnosis**: `squeue` showed multiple tasks sharing single physical nodes
+(e.g. 4 tasks on `r02g08`). Confirmed via `scontrol show node r02g08`:
+
+```
+CPUAlloc=16 CPUEfctv=40 CPUTot=40 CPULoad=3.01
+Gres=gpu:v100:4(S:0-1),nvme:3600
+CfgTRES=cpu=40,mem=382000M,billing=40,gres/gpu:v100=4,gres/nvme=3600
+AllocTRES=cpu=16,mem=192G,gres/gpu:v100=4
+```
+
+Node has 4 GPUs; all 4 are allocated, each to one of our tasks (4×4 cpus =
+16 = `CPUAlloc`, 4×48G = 192G = allocated mem) — confirms 4 tasks genuinely
+share this node. But `CPULoad=3.01` against 16 allocated CPUs is low — if
+tasks were CPU-bound (e.g. all 4 doing Riemannian-mean linear algebra at
+once), load would sit much closer to 16. A load this low means the
+processes are mostly idle/blocked, not computing. This points at I/O or
+filesystem contention (concurrent package imports and/or MOABB/MNE cache
+access from many tasks hitting the same shared scratch filesystem at once)
+rather than pure CPU contention or an inherently slower algorithm at
+128×128 — revising the original hypothesis from the first attempt.
+
+**Decision (2026-07-10)**: let the run ride rather than cancel the 8
+stalled tasks — some tasks in this same batch are genuinely progressing
+(e.g. S3 already into `run_train`), and cancelling would lose that progress
+for an 8h-budget job. Re-check status once the 8h wall-time window is
+closer to expiring; if tasks that showed zero progress are still stuck
+near the limit, they will most likely hit `TIMEOUT` again and need a
+throttled resubmit (e.g. `--array=...%N` to cap concurrency and avoid
+saturating the shared filesystem) — not a further wall-time increase, since
+the bottleneck now looks I/O-bound rather than compute-bound.
+
 ---
 
 ## Verification retrain — COMPLETE 2026-07-08 (all 9 subjects)
