@@ -197,19 +197,42 @@ allow users to extend a running job's own wall-time.
 **Fix for the next resubmit**: given per-epoch cost, not concurrency, is the
 real constraint, the next resubmit needs a much larger wall-time budget
 (not `ARRAY_THROTTLE`, which remains available in `submit_puhti.sh` as a
-general safety valve but wasn't the actual bottleneck here). Check the
-`gpu` partition's actual max wall-time before resubmitting
-(`sinfo -p gpu -o "%P %l"`), then:
+general safety valve but wasn't the actual bottleneck here). Checked the
+`gpu` partition's actual max wall-time: `sinfo -p gpu -o "%P %l"` →
+`3-00:00:00` (3 days) — plenty of headroom. `submit_schirrmeister.sh`'s
+default bumped `8:00:00` → `16:00:00` (real margin over the ~11h realistic
+worst case: ~45-60min preprocessing + up to ~9-10h training), and it now
+respects a pre-set `SBATCH_TIME` instead of unconditionally overriding it.
+
+**Also confirmed via direct file inspection (not just log timestamps)**:
+checked `Subject_4/fold_3` (one of the 17 folds that passed in attempt 1)
+on disk:
+```
+best_model.pt          2026-07-10 23:15:50   <- attempt 2 (overwritten mid-training)
+spike_propagation.png  2026-07-10 22:56:34   <- attempt 2 (written pre-training, harmless)
+pipeline_params.json   2026-07-10 02:44:59   <- attempt 1 (test_acc_fp32=68.9%, still correct)
+```
+Confirms the code-level prediction exactly: `pipeline.py` only writes
+`csp_filters.pkl`/`znorm.pkl`/`mibif.pkl`/`pipeline_params.json` after
+training, evaluation, PTQ sweep, and all visualizations finish, so a
+timed-out run never reaches them — but `training.py`'s `train_fold` saves
+`best_model.pt` on every val-accuracy improvement, which happens almost
+immediately (`best_acc` starts at `-1.0`), so a timed-out rerun does
+clobber it. Net effect: all 17 previously-passing folds now have a correct
+accuracy number in `pipeline_params.json` but a checkpoint that no longer
+matches it (an arbitrary, unevaluated, unfinished snapshot) — not usable
+for anything downstream (inference, energy computation, PTQ analysis).
+This confirms the full-resubmit plan (all 25 folds, not just the ones that
+failed twice) is necessary regardless, since the "already-passing" folds
+need their checkpoint restored too.
+
+**Resubmit command**:
 ```bash
 git pull
-SUBJECTS="2 3 4 7 12" SBATCH_TIME=<partition max, e.g. 16:00:00 or more> \
-    bash submit_schirrmeister.sh Results_schirrmeister_verify
+SUBJECTS="2 3 4 7 12" bash submit_schirrmeister.sh Results_schirrmeister_verify
 ```
-(`submit_schirrmeister.sh` currently hardcodes `SBATCH_TIME=8:00:00` via
-`export` inside the script, which overrides any external env var of the
-same name — will need a direct edit to whatever value the partition allows,
-not just an env var override, unless the script is changed to respect a
-pre-set value first.)
+(uses the new `16:00:00` default; override with `SBATCH_TIME=` if a
+different value is ever needed).
 
 ---
 

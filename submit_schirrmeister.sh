@@ -43,14 +43,18 @@ export SUBJECTS
 # 500 Hz x ~4 s epoch -> ~2000 timesteps, 2x BNCI2014-001's ~1001 -> every
 # SNN forward/backward pass costs roughly 2x. Measured ~30-36 sec/epoch on
 # 2026-07-10; with epochs=1000/patience=100, a fold that doesn't plateau
-# quickly can need close to the full epoch cap (~9-10h training alone).
+# quickly can need close to the full epoch cap (~9-10h training alone) on
+# top of ~45-60 min preprocessing -> ~11h realistic worst case.
 # 4h (first attempt) and 8h (second attempt) both proved insufficient --
 # 8/70 tasks TIMEOUT at 4h, then all 25/25 resubmitted tasks TIMEOUT at 8h
 # (see RESULTS_LOG.md). Bottleneck is per-epoch compute cost, not node
 # contention -- bumping this further, not ARRAY_THROTTLE, is the fix.
+# `gpu` partition allows up to 3-00:00:00 (confirmed via
+# `sinfo -p gpu -o "%P %l"` 2026-07-11), so 16h leaves a real margin over
+# the ~11h worst case instead of cutting it close like the last two tries.
 # Respect a pre-set SBATCH_TIME (e.g. from the caller's environment)
 # instead of always overriding it.
-export SBATCH_TIME="${SBATCH_TIME:-8:00:00}"
+export SBATCH_TIME="${SBATCH_TIME:-16:00:00}"
 
 echo "=============================================="
 echo "  FBCSP-SNN — Schirrmeister2017 cross-dataset run"
