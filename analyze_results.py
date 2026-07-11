@@ -1,8 +1,8 @@
 """Cross-subject accuracy analysis.
 
 Reads ``Results/Subject_N/summary.csv`` for each requested subject, computes
-per-subject FP32 and INT8 mean ± std over CV folds, prints a formatted table,
-and saves a grouped bar chart.
+per-subject FP32 mean ± std over CV folds (plus LDA/SVM baselines where
+present), prints a formatted table, and saves a grouped bar chart.
 
 Usage
 -----
@@ -44,7 +44,7 @@ def _load_summary(csv_path: Path) -> list[dict]:
     -------
     list[dict]
         One dict per numeric fold row.  Keys: ``fold``, ``test_acc_fp32``,
-        ``test_acc_int8``, ``best_val_acc_fp32``.
+        ``best_val_acc_fp32``.
     """
     rows = []
     with open(csv_path, newline="") as f:
@@ -55,7 +55,6 @@ def _load_summary(csv_path: Path) -> list[dict]:
             entry: dict = {
                 "fold":              int(row["fold"]),
                 "test_acc_fp32":     float(row["test_acc_fp32"]),
-                "test_acc_int8":     float(row["test_acc_int8"]),
                 "best_val_acc_fp32": float(row["best_val_acc_fp32"]),
             }
             # Baseline columns are optional (absent in runs before baseline.py was added)
@@ -63,10 +62,6 @@ def _load_summary(csv_path: Path) -> list[dict]:
                 entry["test_acc_lda"] = float(row["test_acc_lda"])
             if row.get("test_acc_svm", "").strip():
                 entry["test_acc_svm"] = float(row["test_acc_svm"])
-            # PTQ-CSP columns (present in runs that integrated per-fold PTQ sweep)
-            for col in ("test_acc_csp_8bit", "test_acc_csp_6bit", "test_acc_csp_4bit"):
-                if row.get(col, "").strip():
-                    entry[col] = float(row[col])
             rows.append(entry)
     return rows
 
@@ -86,17 +81,14 @@ def _subject_stats(rows: list[dict]) -> dict:
     Returns
     -------
     dict
-        Keys: ``fp32_mean``, ``fp32_std``, ``int8_mean``, ``int8_std``,
-        ``val_mean``, ``val_std``, ``n_folds``.  All accuracies in [0, 1].
+        Keys: ``fp32_mean``, ``fp32_std``, ``val_mean``, ``val_std``,
+        ``n_folds``.  All accuracies in [0, 1].
     """
     fp32 = np.array([r["test_acc_fp32"]     for r in rows])
-    int8 = np.array([r["test_acc_int8"]     for r in rows])
     val  = np.array([r["best_val_acc_fp32"] for r in rows])
     result: dict = {
         "fp32_mean": float(fp32.mean()),
         "fp32_std":  float(fp32.std()),
-        "int8_mean": float(int8.mean()),
-        "int8_std":  float(int8.std()),
         "val_mean":  float(val.mean()),
         "val_std":   float(val.std()),
         "n_folds":   len(rows),
@@ -111,15 +103,6 @@ def _subject_stats(rows: list[dict]) -> dict:
         svm = np.array(svm_vals)
         result["svm_mean"] = float(svm.mean())
         result["svm_std"]  = float(svm.std())
-    for col, key in (
-        ("test_acc_csp_8bit", "csp8_mean"),
-        ("test_acc_csp_6bit", "csp6_mean"),
-        ("test_acc_csp_4bit", "csp4_mean"),
-    ):
-        vals = [r[col] for r in rows if col in r]
-        if vals:
-            result[key] = float(np.mean(vals))
-            result[key.replace("mean", "std")] = float(np.std(vals))
     return result
 
 
@@ -140,13 +123,10 @@ def _print_table(
     # Detect which optional columns are present in any subject
     has_lda  = any("lda_mean"  in stats.get(s, {}) for s in subjects)
     has_svm  = any("svm_mean"  in stats.get(s, {}) for s in subjects)
-    has_ptq  = any("csp8_mean" in stats.get(s, {}) for s in subjects)
 
     # Build header / row format based on available columns
-    # Columns: Subject | FP32 | [CSP-8b CSP-6b CSP-4b] | [LDA] | [SVM] | Folds
+    # Columns: Subject | FP32 | [LDA] | [SVM] | Folds
     col_defs: list[tuple[str, int]] = [("Subject", -8), ("FP32 (%)", 14)]
-    if has_ptq:
-        col_defs += [("CSP-8b", 8), ("CSP-6b", 8), ("CSP-4b", 8)]
     if has_lda:
         col_defs.append(("LDA (%)", 10))
     if has_svm:
@@ -169,15 +149,8 @@ def _print_table(
     print(sep)
 
     fp32_vals: list[float] = []
-    int8_vals: list[float] = []
     lda_vals:  list[float] = []
     svm_vals:  list[float] = []
-    csp8_vals: list[float] = []
-    csp6_vals: list[float] = []
-    csp4_vals: list[float] = []
-
-    def _pct(st: dict, key: str) -> str:
-        return f"{st[key]*100:.1f}" if key in st else "N/A"
 
     for s in subjects:
         if s in missing:
@@ -188,8 +161,6 @@ def _print_table(
         st = stats[s]
         fp32_str = f"{st['fp32_mean']*100:.1f}±{st['fp32_std']*100:.1f}"
         row = [f"S{s}", fp32_str]
-        if has_ptq:
-            row += [_pct(st, "csp8_mean"), _pct(st, "csp6_mean"), _pct(st, "csp4_mean")]
         if has_lda:
             row.append(f"{st['lda_mean']*100:.1f}±{st['lda_std']*100:.1f}" if "lda_mean" in st else "N/A")
         if has_svm:
@@ -198,13 +169,8 @@ def _print_table(
         print(_fmt_row(row))
 
         fp32_vals.append(st["fp32_mean"])
-        if not has_lda and not has_svm and "int8_mean" in st:
-            int8_vals.append(st["int8_mean"])
         if "lda_mean"  in st: lda_vals.append(st["lda_mean"])
         if "svm_mean"  in st: svm_vals.append(st["svm_mean"])
-        if "csp8_mean" in st: csp8_vals.append(st["csp8_mean"])
-        if "csp6_mean" in st: csp6_vals.append(st["csp6_mean"])
-        if "csp4_mean" in st: csp4_vals.append(st["csp4_mean"])
 
     print(sep)
 
@@ -214,12 +180,6 @@ def _print_table(
         total_folds    = sum(stats[s]["n_folds"] for s in subjects if s not in missing)
 
         grand_row = ["MEAN", f"{grand_fp32*100:.1f}±{grand_fp32_std*100:.1f}"]
-        if has_ptq:
-            grand_row += [
-                f"{np.mean(csp8_vals)*100:.1f}" if csp8_vals else "N/A",
-                f"{np.mean(csp6_vals)*100:.1f}" if csp6_vals else "N/A",
-                f"{np.mean(csp4_vals)*100:.1f}" if csp4_vals else "N/A",
-            ]
         if has_lda:
             grand_row.append(f"{np.mean(lda_vals)*100:.1f}" if lda_vals else "N/A")
         if has_svm:
@@ -234,11 +194,6 @@ def _print_table(
         sign  = "+" if delta >= 0 else ""
         print(f"  SNN FP32        : {sign}{delta:.1f} pp vs baseline")
 
-        if has_ptq and csp8_vals:
-            drop8 = grand_fp32 - np.mean(csp8_vals)
-            drop6 = grand_fp32 - np.mean(csp6_vals)
-            drop4 = grand_fp32 - np.mean(csp4_vals)
-            print(f"  PTQ-CSP drop    : 8-bit {drop8*100:+.2f}pp  |  6-bit {drop6*100:+.2f}pp  |  4-bit {drop4*100:+.2f}pp")
         if lda_vals:
             delta_lda = np.mean(lda_vals) * 100 - 64.8
             print(f"  LDA vs baseline : {'+'if delta_lda>=0 else ''}{delta_lda:.1f} pp")
@@ -263,7 +218,7 @@ def _plot_bar_chart(
     baseline_fp32: float = 0.648,
     dataset: str = "BNCI2014_001",
 ) -> None:
-    """Save a grouped bar chart comparing per-subject FP32 and INT8 accuracy.
+    """Save a grouped bar chart comparing per-subject FP32 (and LDA/SVM) accuracy.
 
     Parameters
     ----------
@@ -283,46 +238,13 @@ def _plot_bar_chart(
 
     has_lda  = any("lda_mean"  in stats[s] for s in valid)
     has_svm  = any("svm_mean"  in stats[s] for s in valid)
-    has_ptq  = any("csp8_mean" in stats[s] for s in valid)
 
     x = np.arange(len(valid))
 
     fp32_means = np.array([stats[s]["fp32_mean"] * 100 for s in valid])
     fp32_stds  = np.array([stats[s]["fp32_std"]  * 100 for s in valid])
 
-    if has_ptq:
-        # PTQ layout: FP32 | CSP-8b | CSP-6b | CSP-4b  (+ optional LDA / SVM)
-        bar_specs: list[tuple[str, str, str, str]] = [
-            # label, stat_key, color, text_color
-            ("SNN FP32",  "fp32_mean",  "steelblue",   "navy"),
-            ("CSP-8bit",  "csp8_mean",  "mediumseagreen", "darkgreen"),
-            ("CSP-6bit",  "csp6_mean",  "goldenrod",    "saddlebrown"),
-            ("CSP-4bit",  "csp4_mean",  "tomato",       "darkred"),
-        ]
-        if has_lda:
-            bar_specs.append(("LDA", "lda_mean", "slategray", "black"))
-        if has_svm:
-            bar_specs.append(("SVM", "svm_mean", "mediumpurple", "indigo"))
-
-        n_bars = len(bar_specs)
-        width  = 0.8 / n_bars
-        offsets = np.linspace(-(n_bars - 1) / 2 * width, (n_bars - 1) / 2 * width, n_bars)
-
-        fig, ax = plt.subplots(figsize=(max(12, len(valid) * 1.8), 5))
-
-        for off, (label, key, color, tcol) in zip(offsets, bar_specs):
-            vals = np.array([stats[s].get(key, 0) * 100 for s in valid])
-            stds = np.array([stats[s].get(key.replace("mean", "std"), 0) * 100 for s in valid])
-            bars = ax.bar(x + off, vals, width, yerr=stds, capsize=2,
-                          color=color, alpha=0.82, label=label,
-                          error_kw={"elinewidth": 0.8, "ecolor": tcol})
-            for bar, val in zip(bars, vals):
-                if val > 0:
-                    ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.4,
-                            f"{val:.1f}", ha="center", va="bottom", fontsize=5.5, color=tcol)
-
-    elif has_lda or has_svm:
-        # No PTQ: SNN / LDA / SVM
+    if has_lda or has_svm:
         n_bars = 1 + int(has_lda) + int(has_svm)
         width  = 0.8 / n_bars
         offsets_list: list[float] = []
@@ -379,31 +301,20 @@ def _plot_bar_chart(
                 ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.5,
                         f"{val:.1f}", ha="center", va="bottom", fontsize=6.5, color="saddlebrown")
     else:
-        # Original 2-bar layout: FP32 + INT8
-        width = 0.35
-        int8_means = np.array([stats[s]["int8_mean"] * 100 for s in valid])
-        int8_stds  = np.array([stats[s]["int8_std"]  * 100 for s in valid])
+        # No baselines available — SNN FP32 alone.
+        width = 0.5
 
         fig, ax = plt.subplots(figsize=(max(9, len(valid) * 1.2), 5))
 
         bars_fp32 = ax.bar(
-            x - width / 2, fp32_means, width,
+            x, fp32_means, width,
             yerr=fp32_stds, capsize=4,
-            color="steelblue", alpha=0.85, label="FP32",
+            color="steelblue", alpha=0.85, label="SNN (FP32)",
             error_kw={"elinewidth": 1.2, "ecolor": "navy"},
-        )
-        bars_int8 = ax.bar(
-            x + width / 2, int8_means, width,
-            yerr=int8_stds, capsize=4,
-            color="darkorange", alpha=0.80, label="INT8 (sim)",
-            error_kw={"elinewidth": 1.2, "ecolor": "saddlebrown"},
         )
         for bar, val in zip(bars_fp32, fp32_means):
             ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.5,
                     f"{val:.1f}", ha="center", va="bottom", fontsize=7.5, color="navy")
-        for bar, val in zip(bars_int8, int8_means):
-            ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.5,
-                    f"{val:.1f}", ha="center", va="bottom", fontsize=7.5, color="saddlebrown")
 
     ax.set_xticks(x)
     ax.set_xticklabels([f"S{s}" for s in valid])

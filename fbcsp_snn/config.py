@@ -132,9 +132,6 @@ class Config:
     results_dir: str = "Results"
     n_classes: Optional[int] = None
 
-    # Inference-only: post-training CSP weight quantisation (PTQ)
-    csp_bits: Optional[int] = None
-
     # Reliability-only: Monte Carlo noise-robustness sweep (B15)
     reliability_severities: List[float] = field(
         default_factory=lambda: [0.0, 0.05, 0.1, 0.2, 0.3]
@@ -259,10 +256,6 @@ def build_parser() -> argparse.ArgumentParser:
     infer_p = sub.add_parser("infer", parents=[shared], help="Run inference.")
     infer_p.add_argument("--fold", type=int, required=True)
     infer_p.add_argument("--n-folds", type=int, default=10)
-    infer_p.add_argument("--csp-bits", type=int, default=None, choices=[8, 6, 4],
-                         help="Simulate PTQ by quantizing CSP filter weights to "
-                              "this many bits before inference (default: no "
-                              "quantisation).")
 
     # ---- reliability ----
     rel_p = sub.add_parser(
@@ -323,7 +316,7 @@ def config_from_args(args: argparse.Namespace) -> Config:
         "early_stopping_warmup", "spiking_prob", "loss_type", "tau_vr",
         "train_batch_size",
         "feature_selection_method", "feature_percentile", "mi_fraction",
-        "csp_bits", "reliability_severities", "reliability_n_repeats",
+        "reliability_severities", "reliability_n_repeats",
     ]
     for f in optional_fields:
         if hasattr(args, f):
