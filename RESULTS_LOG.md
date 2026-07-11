@@ -250,6 +250,55 @@ revisit seeding only after the full experimental campaign (remaining
 ablations, Cho2017, BNCI2015-001, this resubmit) is complete, so it doesn't
 create an inconsistency between already-collected and future results.
 
+**Training result**: all 25/25 tasks `COMPLETED` (confirmed via `sacct`),
+elapsed 3h28m–6h53m — comfortably within the 16h budget, no repeat of
+attempt 2's total-timeout pattern. Confirms the wall-time bump was the
+actual fix.
+
+**New snag — aggregate jobs, not training**: 4 of 5 subject aggregates
+(`35426604`/S2, `35426605`/S3, `35426606`/S4, `35426607`/S7) hit `TIMEOUT`
+at their `--time=00:20:00` budget; only S12's (`35426608`) `COMPLETED`
+(full run incl. a fresh MOABB reload, in under 9 minutes). Checked the
+actual log content, not just state:
+- S2/S3/S7: only the SBATCH header line ever printed — killed before even
+  the first Python log line ("CUDA not available", which appears ~4 sec in
+  for a healthy run).
+- S4: started `07:43:50`, first Python log line at `07:54:08` — a
+  **10m18s gap** before Python finished starting up — then stalled *again*
+  for the remaining ~9m42s before the 20-min kill, never reaching the next
+  expected line.
+
+Since S12's entire aggregation (including a full MOABB data reload, 6-band
+filtering, and 5 model reconstructions) completed in under 9 minutes once
+running, this isn't a per-subject compute-cost problem — it's a transient
+stall before/during Python startup, on the same `small` (CPU-only)
+partition, at different points for different jobs. Root mechanism not
+pinned down (possibly shared-filesystem contention on Puhti's `/scratch`
+from other load, not necessarily our own concurrency), but the fix is the
+same shape as the training-budget fix: give real margin rather than cut it
+close, since the actual work is fast.
+
+**Fixed**: `run_puhti_aggregate.sh` `--time` `00:20:00` → `01:00:00`;
+`run_puhti_analyze.sh` (same partition/job category, `--time=00:10:00`,
+never yet tested against this failure mode) → `00:30:00`.
+
+**Resubmit — only the 4 stuck aggregates, S12's is already done**:
+```bash
+git pull
+for S in 2 3 4 7; do
+  sbatch --job-name="fbcsp_agg_S${S}" \
+         --export="ALL,SUBJECT_ID=${S},RESULTS_DIR=Results_schirrmeister_verify,MOABB_DATASET=Schirrmeister2017" \
+         run_puhti_aggregate.sh
+done
+```
+Then, once all 5 show `COMPLETED`, the full 14-subject analyze (unchanged
+from the standing plan — the other 9 subjects' aggregates completed back
+in the first attempt):
+```bash
+RESULTS_DIR=Results_schirrmeister_verify SUBJECTS="1 2 3 4 5 6 7 8 9 10 11 12 13 14" \
+    sbatch run_puhti_analyze.sh
+```
+
 ---
 
 ## Verification retrain — COMPLETE 2026-07-08 (all 9 subjects)

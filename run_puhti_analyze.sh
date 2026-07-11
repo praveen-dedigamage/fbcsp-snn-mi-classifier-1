@@ -4,13 +4,17 @@
 #SBATCH --partition=small
 #SBATCH --cpus-per-task=2
 #SBATCH --mem=8G
-#SBATCH --time=00:10:00
+#SBATCH --time=00:30:00
 #SBATCH --output=logs/fbcsp_analyze_%j.out
 #SBATCH --error=logs/fbcsp_analyze_%j.err
 
 # ============================================================
 # FBCSP-SNN — Cross-subject analysis + result summary
 # Runs automatically after all 9 aggregate jobs via submit_puhti.sh
+#
+# Bumped 10min -> 30min 2026-07-11: same small-partition, CPU-only job
+# category as run_puhti_aggregate.sh, which showed 10-20+ minute stalls
+# before the first Python log line even printed. See RESULTS_LOG.md.
 # ============================================================
 
 set -euo pipefail

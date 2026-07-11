@@ -4,7 +4,7 @@
 #SBATCH --partition=small
 #SBATCH --cpus-per-task=2
 #SBATCH --mem=8G
-#SBATCH --time=00:20:00
+#SBATCH --time=01:00:00
 #SBATCH --output=logs/fbcsp_agg_S%x_%j.out
 #SBATCH --error=logs/fbcsp_agg_S%x_%j.err
 
@@ -13,6 +13,14 @@
 # SUBJECT_ID is injected by submit_puhti.sh via --export.
 # Dependency is set to only the fold tasks for this subject,
 # so each subject aggregates as soon as its folds complete.
+#
+# Bumped 20min -> 1h 2026-07-11: Schirrmeister2017 aggregation showed
+# 10-20+ minute stalls before the first Python log line even printed on
+# 4 of 5 subjects (small-partition, CPU-only jobs) -- not compute cost
+# (the one that succeeded finished in under 9 min including a full MOABB
+# reload); looks like transient shared-filesystem/startup contention on
+# Puhti's small partition. Real margin, not cutting it close, since actual
+# work is fast once unblocked. See RESULTS_LOG.md.
 # ============================================================
 
 set -euo pipefail
