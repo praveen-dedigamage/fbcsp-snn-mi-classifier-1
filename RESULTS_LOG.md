@@ -10,6 +10,61 @@ final and copied into the paper.
 
 ---
 
+## Retired digital INT8/CSP-bit PTQ in favour of the reliability sweep (2026-07-11)
+
+**Decision**: B15's original Tier D plan (`TODO.md`, paper folder) always
+said the reliability sweep should produce a unified degradation curve
+"replacing the scattered INT8 column in Tables III/IV and the separate
+CSP-bit columns in Table VI" — not run alongside them. That removal never
+happened when the sweep landed 2026-07-09. Surfaced while planning the
+Schirrmeister2017 resubmit: continuing to compute the digital PTQ/joint
+sweep for a new dataset would have extended a pattern Tier D already said
+should be retired. User confirmed: one reliability sweep (BNCI2014-001) is
+sufficient evidence, and to pull the digital-quantisation code and paper
+tables entirely — not just skip them for Schirrmeister2017.
+
+**Removed from the code** (`fbcsp_snn/pipeline.py`, `quantization.py`,
+`config.py`, `analyze_results.py`, `run_puhti_analyze.sh`; deleted
+`run_e2e_stress.py` + its 2 SLURM wrappers, already effectively superseded
+per this file's 2026-07-07 "start fresh" note):
+- `run_train`/`run_infer`/`run_aggregate`'s INT8 whole-model quantisation,
+  CSP-bit PTQ sweep, and joint CSP+SNN sweep.
+- `quantize_tensor_symmetric`/`quantize_array_symmetric`/`quantize_model`/
+  `quantize_csp_filters`/`quantization_report` — the noise-injection
+  functions used by `reliability.py` (`inject_*_noise`) are untouched, a
+  separate and still-active mechanism.
+- `csp_bits` config field and `--csp-bits` CLI flag.
+- `analyze_results.py`'s `_load_summary` previously read
+  `row["test_acc_int8"]` with a bare dict subscript (no `.get()`) — this
+  would have crashed on any new run's `summary.csv` once the field stopped
+  being written, not just produced a stale column. Found by testing, not
+  assumed.
+
+**Removed from the paper** (`main.tex`, paper folder): Table III/IV's INT8
+columns, the whole `sec:quant`/`tab:joint_quant` ("Joint CSP+SNN Precision
+Sensitivity") subsection, the abstract/contributions/keywords/related-work
+sentences describing the joint quantisation sweep, and the Binary
+Classification placeholder table's INT8 sub-rows. Also updated `TODO.md`'s
+B2/B15 entries and `PAPER_REWRITE_NOTES.md`'s Pillar list (former Pillar 4,
+"INT8 quantisation," retired and folded into Pillar 3's reliability-sweep
+note) to match.
+
+**Verification**: full syntax checks on every edited file; a repo-wide grep
+sweep (multiple passes, zero remaining references to any removed symbol or
+field); a functional smoke test of `analyze_results.py` against synthetic
+new-schema `summary.csv` data (ran clean end to end, including the bar
+chart); and a full paper recompile (`pdflatex`/`bibtex`, 3-pass manual
+build) — 10 pages, zero undefined references, only the same pre-existing
+cosmetic `ieeecolor.cls`/`xcolor` warnings as before. Could not run the
+torch-dependent `pytest` suite locally — no torch installed on this Windows
+dev machine (pre-existing gap, not caused by this change); checked all
+three test files directly and confirmed none reference the removed symbols
+or touch the pipeline orchestration functions/JSON schema at all, only
+lower-level components (CSP fitting, spike encoding). Full technical detail:
+`PIPELINE_REFERENCE.md` §13.
+
+---
+
 ## Schirrmeister2017 retrain — PARTIAL, 5 of 14 subjects need resubmit (2026-07-10)
 
 `bash submit_schirrmeister.sh Results_schirrmeister_verify` (job `35414792`

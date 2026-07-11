@@ -208,19 +208,17 @@ tracked as **B9**/**B10** in the paper's `TODO.md`:
     `losses.py`). See §8 for internals and three confirmed paper mismatches
     (B12-B14 in `TODO.md`).
 11. **FP32 evaluation** on val and test (`pipeline.py:313-315`).
-12. **INT8 whole-model quantisation + re-evaluation** on val and test
-    (`pipeline.py:317-323`).
-13. **CSP-only PTQ sweep at 8/6/4-bit** — re-quantise just the CSP filters,
-    re-run the *already-trained* FP32 SNN on test data three times
-    (`pipeline.py:325-344`). This and step 12 are two independent
-    quantisation experiments (whole-SNN-INT8 vs. CSP-filters-only-Nbit) —
-    **both missing from Fig. 1**, which shows only one classifier branch.
-14. **Diagnostic plots + artifact save** — spike raster, neuron traces, weight
-    histograms, confusion matrices, then pickle `csp`/`znorm`/`mibif` +
-    `best_model.pt` + `pipeline_params.json` (`pipeline.py:346-427`).
+12. **Diagnostic plots + artifact save** — spike raster, neuron traces, weight
+    histograms, confusion matrix, then pickle `csp`/`znorm`/`mibif` +
+    `best_model.pt` + `pipeline_params.json`.
 
-**The test-set numbers that populate the paper's tables come from step 11-13,
+**The test-set numbers that populate the paper's tables come from step 11,
 inside training** — not from a separate inference run.
+
+**Steps 12-13 (INT8 whole-model quantisation, CSP-only PTQ sweep, joint
+CSP+SNN sweep) retired 2026-07-11** — the reliability sweep (§9-11) was
+always meant to replace this digital-quantisation evidence, not run
+alongside it (Tier D). See `RESULTS_LOG.md` for the full removal.
 
 ---
 
@@ -230,26 +228,21 @@ A **post-hoc reproduction path** — reloads everything from disk, never
 retrains:
 
 1. Load `pipeline_params.json` for the requested fold (bands, feature count,
-   CSP `m`) (`pipeline.py:571-581`).
-2. Load raw EEG, keep only the test split (`pipeline.py:589`).
-3. Unpickle the fold's fitted `csp` and `znorm` (`pipeline.py:593-596`).
-4. Optionally re-quantise CSP filters via `--csp-bits`
-   (`pipeline.py:598-600`) — **this flag was broken until 2026-07-06**
-   (`cfg.csp_bits` referenced but never defined in `Config` or the `infer`
-   argparse subparser; fixed same day, verified with a standalone parser test
-   since this environment's Python lacks `torch`).
-5. Unpickle `mibif` if present (`pipeline.py:602-606`).
-6. Re-run the identical preprocessing chain on test data: filter bank → CSP
-   transform → z-norm transform → spike encode → MIBIF transform
-   (`pipeline.py:608-617`).
-7. Load `best_model.pt` into a fresh `SNNClassifier` (dropout forced to 0)
-   (`pipeline.py:619-629`).
-8. FP32 evaluate, then INT8-quantise-and-evaluate, save confusion matrices
-   (`pipeline.py:631-651`).
+   CSP `m`).
+2. Load raw EEG, keep only the test split.
+3. Unpickle the fold's fitted `csp` and `znorm`.
+4. Unpickle `mibif` if present.
+5. Re-run the identical preprocessing chain on test data: filter bank → CSP
+   transform → z-norm transform → spike encode → MIBIF transform.
+6. Load `best_model.pt` into a fresh `SNNClassifier` (dropout forced to 0).
+7. FP32 evaluate, save confusion matrix.
 
 **Purpose:** re-derive test accuracy for one fold without retraining — e.g.
-sanity-check a saved model, or re-run the CSP-bit sweep interactively now
-that the flag works.
+sanity-check a saved model.
+
+The `--csp-bits` flag (re-quantise CSP filters via PTQ before inference) was
+removed 2026-07-11 alongside the broader retirement of digital
+quantisation testing — see `RESULTS_LOG.md`.
 
 ---
 
@@ -268,10 +261,11 @@ Per-fold fields in `pipeline_params.json`:
 | Field | Meaning |
 |---|---|
 | `val_acc_fp32` / `test_acc_fp32` | Held-out accuracy, full 32-bit float weights. `val` used for early-stopping/checkpoint selection (slightly optimistic); `test` is the honest, never-touched number. |
-| `test_acc_int8` | Same trained SNN, weights compressed to 8-bit int (whole-model quantisation). Tests whether the *classifier* survives low-precision hardware. |
-| `test_acc_csp_8bit/_6bit/_4bit` | CSP spatial filters (not the SNN) quantised to 8/6/4-bit, SNN weights left FP32. Simulates an analog/digital crossbar array's precision limit in the *feature-extraction* stage. 4-bit is a much harsher cut than 8-bit — this is where you'd see the pipeline's real hardware floor. |
 | `val_acc_lda`/`test_acc_lda`, `val_acc_svm`/`test_acc_svm` | Classical baselines: log-variance of the same CSP+z-norm output, fit with a plain LDA/SVM. Control group — if the SNN can't beat these, the added complexity (spike encoding, LIF neurons, Van Rossum loss) isn't earning its keep on accuracy grounds. Significance testing on the numbers already in the paper's Tables III/IV shows: SNN significantly beats LDA on both datasets (p<0.005), but only ties SVM on BNCI2014-001 (p≈0.05–0.06, not significant) and loses to SVM on Schirrmeister2017 (p<0.001). |
 | `best_epoch` / `stopped_epoch` | Which checkpoint got saved (peak val accuracy) vs. when training gave up (`early_stopping_patience=100` epochs with no improvement). |
+
+(`test_acc_int8` and `test_acc_csp_8bit/_6bit/_4bit` — digital PTQ fields —
+were removed 2026-07-11; see `RESULTS_LOG.md`.)
 
 Confusion matrices are row-normalised (`pipeline.py:850-852`): each row sums
 to 100%, i.e. "of trials that were truly class X, what % got predicted as
@@ -284,16 +278,16 @@ accuracy.
 
 Fig. 1 (the two-column Training/Inference TikZ diagram) shows a single
 classifier branch: CSP → Z-Norm → Spike Encoder → MIBIF → LIF SNN. The actual
-code does three additional things every fold that the figure omits:
+code does one additional thing every fold that the figure omits:
 
 1. The parallel LDA/SVM baseline branch (§2 step 7).
-2. Whole-model INT8 quantisation (§2 step 12).
-3. The separate CSP-only 8/6/4-bit PTQ sweep (§2 step 13).
+
+(The whole-model INT8 quantisation and CSP-only PTQ sweep that used to be
+listed here were removed 2026-07-11 — see §2 and `RESULTS_LOG.md`.)
 
 None of this is incorrect — the figure is just simplified. Worth deciding
-whether to extend the figure/caption to acknowledge the baseline branch and
-both quantisation experiments, or leave it as an intentional simplification
-and describe the rest only in prose.
+whether to extend the figure/caption to acknowledge the baseline branch, or
+leave it as an intentional simplification and describe it only in prose.
 
 ---
 
@@ -1041,3 +1035,58 @@ loose scripts on Puhti before the next pull — including the *old*,
 untracked `compute_energy.py`, since the new tracked version would
 otherwise conflict with it on `git pull` (git won't silently overwrite an
 untracked file that collides with an incoming tracked one).
+
+---
+
+## 13. Retiring digital PTQ in favour of the reliability sweep (2026-07-11)
+
+§9's original Tier D plan (see below) always said the reliability sweep
+should produce "one unified 'accuracy vs. hardware-realism level'
+degradation curve, **replacing the scattered INT8 column in Tables III/IV
+and the separate CSP-bit columns in Table VI**" — not run alongside them.
+That removal never actually happened when the sweep landed 2026-07-09; the
+INT8/CSP-bit code and paper tables just kept sitting there next to the new
+reliability figure. Surfaced while planning the Schirrmeister2017 resubmit:
+continuing to compute the digital PTQ/joint sweep for a new dataset would
+have extended a pattern that was already supposed to be retired. User
+decided one reliability sweep (BNCI2014-001) is sufficient evidence and to
+pull the digital quantisation code and paper tables entirely, not just
+skip them for Schirrmeister2017.
+
+**Removed from the codebase:**
+- `run_train`/`run_infer`/`run_aggregate`'s INT8 whole-model quantisation,
+  CSP-bit PTQ sweep, and joint CSP+SNN sweep (`pipeline.py`) — §2 steps
+  12-13, §3 step 4, and the fields listed in §5 all no longer apply.
+- `quantize_tensor_symmetric`, `quantize_array_symmetric`, `quantize_model`,
+  `quantize_csp_filters`, `quantization_report` (`quantization.py`) — the
+  noise-injection functions from §9-11 Tier B/C (`inject_*_noise`) are
+  untouched, since they're a different, still-active mechanism.
+- `csp_bits` config field and `--csp-bits` CLI flag (`config.py`).
+- `run_e2e_stress.py` and its two SLURM wrappers (`run_puhti_e2e.sh`,
+  `run_puhti_e2e_analyze.sh`) — already effectively superseded/archived per
+  `RESULTS_LOG.md`'s 2026-07-07 "start fresh" note, and built entirely
+  around the retired digital-quantisation concept.
+- INT8/CSP-bit/joint-sweep columns from `analyze_results.py` and
+  `run_puhti_analyze.sh`'s embedded summary script. `analyze_results.py`'s
+  `_load_summary` previously read `row["test_acc_int8"]` with a bare dict
+  subscript (no `.get()`) — this would have crashed on any new run's
+  `summary.csv` once the field stopped being written, not just produced a
+  stale column. Found by testing, not assumed.
+
+**Removed from the paper:** Table III/IV's INT8 columns, the whole
+`sec:quant`/`tab:joint_quant` ("Joint CSP+SNN Precision Sensitivity")
+subsection, the abstract/contributions/keywords/related-work sentences
+describing the joint quantisation sweep, and the Binary Classification
+placeholder table's INT8 sub-rows. Paper recompiles clean (10 pages, zero
+undefined references, only the same pre-existing cosmetic
+`ieeecolor.cls`/`xcolor` warnings as before).
+
+**Verification**: full syntax checks on every edited file, a repo-wide grep
+sweep (multiple passes, zero remaining references to any removed symbol/
+field), and a functional smoke test of `analyze_results.py` against
+synthetic new-schema `summary.csv` data (ran clean end to end). Could not
+run the torch-dependent `pytest` suite locally — no torch installed on this
+Windows dev machine, a pre-existing environment gap, not something this
+change caused. Checked all three test files directly: none reference the
+removed symbols or touch the pipeline orchestration functions/JSON schema
+at all, only lower-level components (CSP fitting, spike encoding).
