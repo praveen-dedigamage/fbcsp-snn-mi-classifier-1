@@ -5,12 +5,20 @@
 #SBATCH --gres=gpu:v100:1
 #SBATCH --cpus-per-task=2
 #SBATCH --mem=16G
-#SBATCH --time=02:30:00
+#SBATCH --time=06:00:00
 # 30 min was measured too short 2026-07-09: a real run only got through
 # 4/9 sweeps (csp/snn/beta_noise + 3/5 severities of filter_bank_noise)
 # before hitting the wall. joint_noise_all_sources (all 7 sources, incl.
 # the filter bank) is likely the most expensive sweep and hadn't even
-# started. Bumped generously — pure inference, low GPU-hour cost either way.
+# started. Bumped generously to 2:30:00 for BNCI2014-001 (validated,
+# job 35412677, all 9 subjects x 5 folds completed within budget).
+# Bumped again to 6:00:00 2026-07-11 for Schirrmeister2017: each of the up
+# to 900 Monte Carlo evaluations per fold re-applies the full preprocessing
+# chain over 2001 timesteps (vs ~1001 for BNCI2014-001) -- training showed
+# roughly 2x per-timestep cost scaling for this dataset, so budgeting a
+# real margin rather than cutting it close again (see RESULTS_LOG.md's
+# Schirrmeister2017 training saga for why "cut it close" kept failing).
+# Pure inference either way, so the extra budget costs little if unused.
 #SBATCH --array=1-45                   # 9 subjects x 5 folds = 45 tasks (match run_puhti_array.sh)
 #SBATCH --output=logs/fbcsp_rel_S%a_%j.out
 #SBATCH --error=logs/fbcsp_rel_S%a_%j.err
