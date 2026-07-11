@@ -65,7 +65,45 @@ lower-level components (CSP fitting, spike encoding). Full technical detail:
 
 ---
 
-## Schirrmeister2017 retrain — PARTIAL, 5 of 14 subjects need resubmit (2026-07-10)
+## Schirrmeister2017 retrain — COMPLETE 2026-07-11 (all 14 subjects)
+
+**Final result**, after three training submission attempts and two
+aggregate-step wall-time bumps (full diagnosis below, kept for the
+record): job `35426603` (25/25 tasks `COMPLETED`), aggregates `35431545`-
+`35431548` (all `COMPLETED` on the resubmit after bumping
+`run_puhti_aggregate.sh`'s budget), analyze `35431810` (`COMPLETED`). Raw
+output: `puhti_logs/Results_schirrmeister_verify/fbcsp_analyze_35431810.out`.
+
+| | SNN FP32 | LDA | SVM |
+|---|---|---|---|
+| Mean (n=14) | 62.9±10.5% | 72.3±9.6% | 71.1±9.9% |
+
+Significance (paired t-test / Wilcoxon, per-subject means, n=14): **SNN
+loses significantly to both baselines** — vs SVM: −8.14pp, p=0.00074/0.00061;
+vs LDA: −9.35pp, p=0.00040/0.00061. SNN wins on only 2/14 subjects against
+either baseline (S1, S11). Largest gap: S14 (−27/−28pp). This is a reversal
+from the stale adaptive-band numbers, which had the SNN *beating* LDA
+(+11.25pp) — on the real fixed-band data it loses (−9.35pp). Full writeup
+with per-subject table and methodology:
+`puhti_logs/Results_schirrmeister_verify/SIGNIFICANCE_TEST_RERUN.md`.
+
+Written into the paper: Table IV (`tab:per_subject_sch`), `sec:sch`'s
+narrative, the abstract, and the Conclusion — all `\TODO{}` markers for
+Schirrmeister2017 resolved. Also corrected a now-false claim in the
+"Subject Variability and BCI Illiteracy" discussion (S9 was cited at a
+stale 35.5%, near chance; the real value is 48.9%, not near chance at all
+— that sentence no longer applies to any Schirrmeister2017 subject and was
+rewritten). Paper recompiles clean (10 pages, zero undefined references).
+
+**Flagged, not fixed**: `main.tex`'s "Subject Variability" paragraph cites
+BNCI2014-001's S2 at 42.8%, which doesn't match Table III's own printed S2
+row (FP32 49.9±2.6, LDA 44.1±3.8, SVM 39.6±4.9 — no obvious combination
+gives 42.8%). Not investigated further — out of scope for the
+Schirrmeister2017 fix, but worth checking before submission.
+
+### Full attempt history (kept for the record)
+
+**Attempt 1** — PARTIAL, 5 of 14 subjects needed resubmit (2026-07-10)
 
 `bash submit_schirrmeister.sh Results_schirrmeister_verify` (job `35414792`
 training array, 70 tasks = 14 subjects × 5 folds; `35414793`–`35414806`
