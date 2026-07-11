@@ -95,6 +95,25 @@ stale 35.5%, near chance; the real value is 48.9%, not near chance at all
 — that sentence no longer applies to any Schirrmeister2017 subject and was
 rewritten). Paper recompiles clean (10 pages, zero undefined references).
 
+**Decision (2026-07-11, reversed from the earlier "one dataset is enough"
+call): also run the reliability sweep on Schirrmeister2017**, to get a
+single combined hardware-realism table/figure spanning both channel counts
+(22 vs 128) rather than BNCI2014-001 alone. `run_puhti_reliability.sh` was
+already fixed for this dataset (wall-time bumped 2:30→6:00, confirmed
+`reliability.py` has zero hardcoded channel/timestep assumptions). Submit:
+```bash
+git pull
+mkdir -p logs
+RESULTS_DIR=Results_schirrmeister_verify MOABB_DATASET=Schirrmeister2017 \
+    sbatch --array=1-70 run_puhti_reliability.sh
+```
+`aggregate_reliability.py` is already dataset-agnostic (`--results-dir`/
+`--subjects` flags) and needs no changes. `plot_reliability_sweep.py`
+currently has BNCI2014-001's numbers **hardcoded as constants**, not
+read from a file — it will need editing to add Schirrmeister2017's
+numbers once this sweep completes, to actually produce the combined
+two-dataset figure/table.
+
 **Flagged, not fixed**: `main.tex`'s "Subject Variability" paragraph cites
 BNCI2014-001's S2 at 42.8%, which doesn't match Table III's own printed S2
 row (FP32 49.9±2.6, LDA 44.1±3.8, SVM 39.6±4.9 — no obvious combination
