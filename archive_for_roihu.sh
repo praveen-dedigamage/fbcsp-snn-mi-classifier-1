@@ -24,10 +24,32 @@
 # Submit: sbatch archive_for_roihu.sh
 # ============================================================
 
-set -euo pipefail
+set -uo pipefail
+# Note: NOT using `set -e` here. GNU tar exits 1 (not 0) when a file
+# changed while being archived -- a warning, not a fatal error -- which
+# is expected if other jobs (e.g. an in-progress training run) are
+# actively writing into Results_*/ at the same time. `set -e` would abort
+# the whole script on that harmless warning, silently skipping every step
+# after it (found 2026-07-20: the mne_data archive never ran because of
+# exactly this, while the BNCI2015-001 training job was still writing new
+# results concurrently). Each tar call below checks its own exit code
+# explicitly instead, tolerating 1 but still failing hard on real errors.
 
 PROJECT_DIR=/scratch/project_2003397/praveen
 cd "${PROJECT_DIR}"
+
+# Runs `tar "$@"`, tolerating exit code 1 (non-fatal "file changed as we
+# read it" warning) but aborting the script on any other non-zero code.
+run_tar() {
+    tar "$@"
+    local ec=$?
+    if [ "${ec}" -gt 1 ]; then
+        echo "FATAL: tar exited ${ec} (a real error, not just a changed-file warning)" >&2
+        exit "${ec}"
+    elif [ "${ec}" -eq 1 ]; then
+        echo "NOTE: tar reported changed files during archiving (exit 1) -- likely another job writing concurrently. Continuing; consider re-running once no jobs are actively writing, for a fully consistent snapshot."
+    fi
+}
 
 echo "=============================================="
 echo "  Archive for Roihu migration"
@@ -47,7 +69,7 @@ echo ""
 # (Grace Hopper), so this venv cannot run there and must be rebuilt
 # fresh instead of migrated.
 echo "--- Archiving repo (excluding .venv) ---"
-tar --exclude='fbcsp-snn-mi-classifier-1/.venv' \
+run_tar --exclude='fbcsp-snn-mi-classifier-1/.venv' \
     -czf "fbcsp-snn-mi-classifier-1_$(date +%Y%m%d).tar.gz" \
     fbcsp-snn-mi-classifier-1/
 echo "Repo archive done: $(date)"
@@ -59,7 +81,7 @@ ls -lh fbcsp-snn-mi-classifier-1_*.tar.gz
 if [ -d "mne_data" ]; then
     echo ""
     echo "--- Archiving mne_data cache ---"
-    tar -czf "mne_data_$(date +%Y%m%d).tar.gz" mne_data/
+    run_tar -czf "mne_data_$(date +%Y%m%d).tar.gz" mne_data/
     echo "mne_data archive done: $(date)"
     ls -lh mne_data_*.tar.gz
 else
