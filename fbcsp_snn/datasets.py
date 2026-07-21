@@ -85,6 +85,75 @@ DATASET_REGISTRY: Dict[str, Dict] = {
 }
 
 
+_moabb_offline_patch_applied = False
+
+
+def _patch_moabb_offline_cache() -> None:
+    """Patch MOABB's legacy BNCI ``data_path()`` to skip its network
+    round-trip when the requested file is already cached locally.
+
+    ``moabb.datasets.download.data_dl()`` (what BNCI's ``data_path()`` calls)
+    invokes ``pooch.retrieve()`` even when the local file's hash already
+    matches -- pooch's HTTP downloader still attempts to reach the remote
+    host (e.g. ``lampx.tugraz.at`` for BNCI2014-001) to verify/fetch
+    metadata before deciding to skip the download. On clusters where that
+    specific host is unreachable (firewalled login/compute nodes), this
+    hangs for a long time instead of failing fast, even though the cached
+    file on disk is already complete and correct.
+
+    This patches ``moabb.datasets.bnci.base.data_path`` (and the reference
+    already bound into ``bnci_2014``/``bnci_2015``'s own module namespaces,
+    since ``from .base import data_path`` binds a separate name at import
+    time) to return the local path directly, with NO network call,
+    whenever that path already exists on disk -- computed via the exact
+    same ``get_dataset_path()`` / ``_url_to_local_path()`` logic MOABB
+    itself uses, so the resolved path is guaranteed identical. Falls back
+    to MOABB's real, network-touching implementation whenever the file is
+    not yet cached, so genuinely missing data still downloads normally.
+    """
+    global _moabb_offline_patch_applied
+    if _moabb_offline_patch_applied:
+        return
+
+    import importlib
+    import os.path as osp
+
+    try:
+        import moabb.datasets.bnci.base as _bnci_base
+        from moabb.datasets.download import get_dataset_path
+        from mne.utils import _url_to_local_path
+    except ImportError:
+        return  # MOABB/MNE not installed -- nothing to patch
+
+    _original_data_path = _bnci_base.data_path
+
+    def _offline_first_data_path(url, path=None, force_update=False,
+                                  update_path=None, verbose=None):
+        try:
+            resolved_path = get_dataset_path("BNCI", path)
+            destination = _url_to_local_path(
+                url, osp.join(resolved_path, "MNE-bnci-data")
+            )
+            if osp.isfile(destination) and not force_update:
+                return [destination]
+        except Exception:
+            pass  # any resolution issue -> fall through to the real path
+        return _original_data_path(url, path, force_update, update_path, verbose)
+
+    _bnci_base.data_path = _offline_first_data_path
+
+    for mod_name in ("bnci_2014", "bnci_2015"):
+        try:
+            mod = importlib.import_module(f"moabb.datasets.bnci.{mod_name}")
+            if getattr(mod, "data_path", None) is _original_data_path:
+                mod.data_path = _offline_first_data_path
+        except ImportError:
+            continue
+
+    _moabb_offline_patch_applied = True
+    logger.info("Patched MOABB BNCI data_path() for offline-cache-first loading")
+
+
 def get_n_classes(dataset_name: str) -> int:
     """Return the number of classes for *dataset_name*.
 
@@ -174,6 +243,8 @@ def load_moabb(
         moabb.set_log_level("WARNING")
     except ImportError as exc:
         raise ImportError("MOABB is not installed. Run: pip install moabb") from exc
+
+    _patch_moabb_offline_cache()
 
     # Dynamically import the dataset class from MOABB
     moabb_cls_name = info["moabb_cls"]
