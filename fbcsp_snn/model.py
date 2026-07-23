@@ -192,6 +192,139 @@ class SNNClassifier(nn.Module):
         return class_votes.argmax(dim=-1)                           # (batch,)
 
 
+class ANNClassifier(nn.Module):
+    """Non-spiking twin of :class:`SNNClassifier` -- identical architecture
+    and identical leaky-integration recurrence, but the LIF neuron's
+    spike-and-reset nonlinearity is replaced by a continuous ReLU applied
+    to the same leaky-integrated membrane potential (no threshold, no
+    reset, no binary output).
+
+    Every other parameter is unchanged from ``SNNClassifier``: same
+    ``n_input``/``n_hidden``/``n_output`` sizes, same dropout, same
+    ``beta`` decay applied to the membrane recurrence, and the exact same
+    ``forward``/``decode`` signatures -- so it drops directly into
+    :func:`fbcsp_snn.training.train_fold` and :func:`evaluate_model`
+    unchanged, with either ``loss_type='van_rossum'`` (Van Rossum distance
+    is just an exponentially-filtered MSE, so it works unmodified on
+    continuous output) or ``loss_type='cross_entropy'``. This isolates
+    whether the spiking mechanism itself contributes anything, holding
+    architecture, optimizer, training protocol, and input features fixed.
+
+    Parameters
+    ----------
+    n_input, n_hidden, n_classes, population_per_class, beta, dropout_prob
+        Identical meaning to :class:`SNNClassifier`.
+
+    Attributes
+    ----------
+    n_output : int
+        Total output neurons (= ``n_classes * population_per_class``).
+    """
+
+    def __init__(
+        self,
+        n_input: int,
+        n_hidden: int = 64,
+        n_classes: int = 4,
+        population_per_class: int = 20,
+        beta: float = 0.95,
+        dropout_prob: float = 0.5,
+    ) -> None:
+        super().__init__()
+
+        self.n_input = n_input
+        self.n_hidden = n_hidden
+        self.n_classes = n_classes
+        self.population_per_class = population_per_class
+        self.n_output = n_classes * population_per_class
+        self.beta = beta
+
+        self.fc1 = nn.Linear(n_input, n_hidden)
+        self.drop1 = nn.Dropout(p=dropout_prob)
+        self.fc2 = nn.Linear(n_hidden, self.n_output)
+        self.drop2 = nn.Dropout(p=dropout_prob)
+
+        param_count = sum(p.numel() for p in self.parameters() if p.requires_grad)
+        logger.info(
+            "ANNClassifier (non-spiking twin) — input: %d  hidden: %d  "
+            "classes: %d  pop/class: %d  output: %d  trainable params: %d",
+            n_input, n_hidden, n_classes, population_per_class,
+            self.n_output, param_count,
+        )
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        return_hidden: bool = False,
+    ) -> Union[
+        Tuple[torch.Tensor, torch.Tensor],
+        Tuple[torch.Tensor, torch.Tensor, torch.Tensor],
+    ]:
+        """Run the leaky-integrator simulation over all timesteps.
+
+        Mirrors :meth:`SNNClassifier.forward` exactly (same signature,
+        same return shapes) so every existing caller works unchanged --
+        ``act_out``/``act_hidden`` stand in for ``spk_out``/``spk_hidden``
+        but are continuous-valued rather than binary.
+
+        Parameters
+        ----------
+        x : torch.Tensor
+            Input tensor, shape ``(T, batch, n_input)`` -- the same
+            spike-encoded sequence ``SNNClassifier`` receives.
+        return_hidden : bool
+            If ``True``, also return the hidden-layer activation trace.
+
+        Returns
+        -------
+        act_out : torch.Tensor
+            Output activation trace, shape ``(T, batch, n_output)``.
+        mem_out : torch.Tensor
+            Identical to ``act_out`` (kept only so the 2-tuple return
+            shape matches ``SNNClassifier.forward`` exactly).
+        act_hidden : torch.Tensor
+            Only returned when ``return_hidden=True``. Hidden-layer
+            activation trace, shape ``(T, batch, n_hidden)``.
+        """
+        T, batch, _ = x.shape
+        mem1 = torch.zeros(batch, self.n_hidden, device=x.device, dtype=x.dtype)
+        mem2 = torch.zeros(batch, self.n_output, device=x.device, dtype=x.dtype)
+
+        act_out_list: list[torch.Tensor] = []
+        act_hidden_list: list[torch.Tensor] = []
+
+        for t in range(T):
+            cur1 = self.drop1(self.fc1(x[t]))
+            mem1 = self.beta * mem1 + cur1
+            act1 = torch.relu(mem1)
+
+            cur2 = self.drop2(self.fc2(act1))
+            mem2 = self.beta * mem2 + cur2
+            act2 = torch.relu(mem2)
+
+            act_out_list.append(act2)
+            if return_hidden:
+                act_hidden_list.append(act1)
+
+        act_out = torch.stack(act_out_list, dim=0)   # (T, batch, n_output)
+        if return_hidden:
+            act_hidden = torch.stack(act_hidden_list, dim=0)   # (T, batch, n_hidden)
+            return act_out, act_out, act_hidden
+        return act_out, act_out
+
+    def decode(self, act_out: torch.Tensor) -> torch.Tensor:
+        """Winner-take-all decoding -- identical logic to
+        :meth:`SNNClassifier.decode`, just summing continuous activations
+        instead of spike counts.
+        """
+        activation_sums = act_out.sum(dim=0)
+        activation_sums = activation_sums.view(
+            -1, self.n_classes, self.population_per_class
+        )
+        class_votes = activation_sums.sum(dim=-1)
+        return class_votes.argmax(dim=-1)
+
+
 # ---------------------------------------------------------------------------
 # Optional torch.compile guard (Linux / Triton only)
 # ---------------------------------------------------------------------------
