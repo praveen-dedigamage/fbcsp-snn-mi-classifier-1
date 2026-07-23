@@ -15,6 +15,11 @@
 #   bash submit_fair_baseline.sh Results_bnci2015 BNCI2015_001 12
 #   SUBJECTS="1 2 3" bash submit_fair_baseline.sh Results_verify BNCI2014_001
 #
+# Override wall time (default 30 min; bump for high-dimensional datasets --
+# Schirrmeister2017's ~576K-dim flattened vectors are much slower to PCA/fit
+# than BNCI2014-001's ~288K or Cho2017's ~74K):
+#   SBATCH_TIME=1:30:00 bash submit_fair_baseline.sh Results_schirrmeister_verify Schirrmeister2017 14
+#
 # Aggregate once the array finishes:
 #   python aggregate_fair_baseline.py --results-dir <EXISTING_RESULTS_DIR> \
 #       --subjects 1 2 3 4 5 6 7 8 9
@@ -29,6 +34,7 @@ RESULTS_DIR="${1:?Usage: bash submit_fair_baseline.sh RESULTS_DIR MOABB_DATASET 
 MOABB_DATASET="${2:?Usage: bash submit_fair_baseline.sh RESULTS_DIR MOABB_DATASET [N_SUBJECTS]}"
 N_SUBJECTS="${3:-9}"
 N_FOLDS="${N_FOLDS:-5}"
+SBATCH_TIME="${SBATCH_TIME:-}"
 
 if [ ! -d "${RESULTS_DIR}" ]; then
     echo "ERROR: ${RESULTS_DIR} does not exist -- this script reuses an" >&2
@@ -57,10 +63,15 @@ echo "  Dataset:             ${MOABB_DATASET}"
 echo "  Subjects:            ${SUBJECTS}"
 echo "  N_FOLDS:             ${N_FOLDS}"
 echo "  Array tasks:         ${ARRAY_TASKS}  (${N_TASKS} total)"
+[ -n "${SBATCH_TIME}" ] && echo "  Wall time override:  ${SBATCH_TIME}"
 echo "=============================================="
+
+TIME_FLAG=""
+[ -n "${SBATCH_TIME}" ] && TIME_FLAG="--time=${SBATCH_TIME}"
 
 sbatch \
     --array="${ARRAY_TASKS}" \
+    ${TIME_FLAG} \
     --export="ALL,RESULTS_DIR=${RESULTS_DIR},MOABB_DATASET=${MOABB_DATASET},N_FOLDS=${N_FOLDS}" \
     run_fair_baseline_array.sh
 
