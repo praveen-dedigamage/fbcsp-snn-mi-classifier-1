@@ -10,6 +10,82 @@ final and copied into the paper.
 
 ---
 
+## 0. ANN twin (non-spiking) -- isolating the spiking mechanism (2026-07-23/24)
+
+**Status:** BNCI2014-001 COMPLETE (from earlier); Cho2017 COMPLETE
+2026-07-24; BNCI2015-001 COMPLETE 2026-07-24; Schirrmeister2017 SUBMITTED
+(jobs 35559000 van_rossum / 35559001 cross_entropy), not yet complete.
+
+Non-spiking twin of SNNClassifier (`fbcsp_snn/model.py::ANNClassifier`):
+identical layer sizes/dropout/optimiser/protocol/input (same MIBIF-selected
+spike-encoded sequence), LIF spike-and-reset replaced by continuous ReLU on
+the same leaky-integrated membrane potential. Tested with both the SNN's
+own Van Rossum loss (unmodified) and the existing cross-entropy ablation
+loss. Reuses each fold's already-saved CSP/z-norm/MIBIF artifacts --
+`run_ann_twin.py`, `submit_ann_twin_pair.sh` (dependency-chained so
+cross_entropy's tasks find `ann_twin_inputs.pt` already cached).
+
+### BNCI2014-001 (n=9) -- already in the paper (Table IX)
+SNN+VR 66.0±13.6, SNN+CE 61.6±12.7 (existing Table VI ablation), ANN+VR
+27.8±2.4, ANN+CE 51.5±11.7. SNN+VR beats both ANN variants decisively
+(vs ANN+VR: +38.2pp, 9/9, p<0.0001; vs ANN+CE: +14.5pp, 9/9, p=0.0003).
+
+### Cho2017 (n=52) -- COMPLETE 2026-07-24
+Jobs: van_rossum 35547346-equivalent chain (see submit history above),
+ANN-twin van_rossum + cross_entropy submitted via `submit_ann_twin_pair.sh
+Results_cho2017 Cho2017 52`.
+
+| Method | Mean (%) |
+|---|---|
+| SNN + VR (full pipeline, already reported) | 56.8 ± 10.4 |
+| ANN + VR (new) | 51.1 ± 3.4 |
+| ANN + CE (new) | **58.5 ± 12.0** |
+
+Significance (n=52, paired t-test / Wilcoxon vs SNN+VR):
+- SNN+VR vs ANN+VR: SNN wins, +5.75pp, 36/52 subjects, p=0.000237 / p=0.000802 (significant)
+- SNN+VR vs ANN+CE: **ANN+CE wins**, -1.70pp, ANN+CE wins 33/52 subjects, p=0.031007 / p=0.028314 (significant)
+- ANN+CE vs ANN+VR: ANN+CE wins, +7.45pp, 36/52, p=0.000047 / p=0.000177 (significant)
+
+### BNCI2015-001 (n=12) -- COMPLETE 2026-07-24
+Jobs: van_rossum 35558176, cross_entropy 35558177 (chained).
+
+| Method | Mean (%) |
+|---|---|
+| SNN + VR (full pipeline, already reported) | 72.1 ± 15.8 |
+| ANN + VR (new) | 50.4 ± 2.7 |
+| ANN + CE (new) | **73.8 ± 15.0** |
+
+Significance (n=12):
+- SNN+VR vs ANN+VR: SNN wins, +21.75pp, 11/12 subjects, p=0.000568 / p=0.000977 (significant)
+- SNN+VR vs ANN+CE: **ANN+CE wins**, -1.66pp, ANN+CE wins 11/12 subjects, p=0.015329 / p=0.001953 (significant)
+- ANN+CE vs ANN+VR: ANN+CE wins, +23.41pp, 11/12, p=0.000212 / p=0.000977 (significant)
+
+### Schirrmeister2017 (n=14) -- SUBMITTED, not complete
+Jobs 35559000 (van_rossum) / 35559001 (cross_entropy, chained), 16h wall
+time. Aggregate once done:
+```
+python aggregate_ann_twin.py --results-dir Results_schirrmeister_verify --loss-type van_rossum --subjects 1 2 3 4 5 6 7 8 9 10 11 12 13 14
+python aggregate_ann_twin.py --results-dir Results_schirrmeister_verify --loss-type cross_entropy --subjects 1 2 3 4 5 6 7 8 9 10 11 12 13 14
+```
+
+### IMPORTANT: this reverses the BNCI2014-001 narrative on both binary datasets
+On BNCI2014-001 (4-class), SNN+VR beats ANN+CE decisively (66.0 vs 51.5,
++14.5pp). On BOTH binary datasets, ANN+CE *significantly beats* SNN+VR
+instead (Cho2017: 58.5 vs 56.8, +1.7pp for ANN+CE; BNCI2015-001: 73.8 vs
+72.1, +1.7pp for ANN+CE) -- small margins but statistically real (p<0.032
+in both cases, and ANN+CE wins the majority of subjects in both: 33/52,
+11/12). The "Van Rossum loss doesn't suit non-spiking output" finding
+holds robustly on all three datasets tested so far (ANN+VR loses
+significantly to SNN+VR every time) -- what does NOT hold universally is
+"spiking beats a well-tuned non-spiking twin": that's true on BNCI2014-001,
+false on both binary datasets tested so far. Schirrmeister2017 (the other
+4-class dataset) will help tell whether this tracks class count or
+something else about these specific datasets. **The paper's "ANN Twin"
+section needs to report this honestly as dataset-dependent, not claim a
+universal spiking advantage** -- already updated 2026-07-24.
+
+---
+
 ## Retired digital INT8/CSP-bit PTQ in favour of the reliability sweep (2026-07-11)
 
 **Decision**: B15's original Tier D plan (`TODO.md`, paper folder) always
@@ -842,29 +918,248 @@ Monitor with `squeue -u $USER`; per-subject summaries land in
 
 ## 1. B2 — Missing binary-classification results (Table V)
 
-**Status:** not yet submitted.
+**Status:** BNCI2015-001 COMPLETE 2026-07-20; Cho2017 COMPLETE 2026-07-22.
+**Both binary datasets now done — Table V, Section V-C (Binary
+Classification), the abstract, and the Conclusion in `main.tex` have all
+been updated with real numbers.**
 
-### Cho2017 (2-class, 52 subjects, 64ch, 512Hz)
-*(paste `summary.csv` / analyze output here once complete)*
+### Cho2017 (2-class, 52 subjects, 64ch, 512Hz) — COMPLETE 2026-07-22
+Job `35547346` (260 tasks, 52 subjects x 5 folds), analyze log
+`logs/fbcsp_analyze_35547399.out`.
 
-### BNCI2015-001 (2-class, 12 subjects, 13ch, 512Hz)
-*(paste `summary.csv` / analyze output here once complete)*
+| Subj | SNN FP32 | LDA | SVM |
+|---|---|---|---|
+| S1  | 64.0±6.4  | 71.0±4.9 | 64.5±6.8 |
+| S2  | 49.0±6.8  | 54.0±4.6 | 45.0±3.2 |
+| S3  | 84.5±3.3  | 85.0±4.5 | 81.0±2.5 |
+| S4  | 70.5±11.8 | 73.0±3.3 | 75.5±4.0 |
+| S5  | 70.5±5.3  | 65.0±5.7 | 68.5±3.4 |
+| S6  | 61.0±7.3  | 66.0±4.6 | 64.0±4.6 |
+| S7  | 52.5±0.8  | 60.0±2.8 | 60.4±5.1 |
+| S8  | 42.0±3.3  | 45.5±5.6 | 42.5±7.1 |
+| S9  | 45.0±5.2  | 51.2±5.5 | 54.6±8.1 |
+| S10 | 58.0±7.6  | 70.5±8.0 | 73.0±6.2 |
+| S11 | 48.5±3.0  | 50.5±4.6 | 52.0±4.8 |
+| S12 | 56.5±6.2  | 59.0±2.0 | 65.0±5.7 |
+| S13 | 63.0±4.0  | 60.0±8.4 | 62.5±6.9 |
+| S14 | 85.5±5.8  | 92.0±3.3 | 92.0±5.1 |
+| S15 | 52.5±2.2  | 57.0±5.8 | 59.0±7.5 |
+| S16 | 52.5±6.9  | 57.5±6.5 | 59.5±6.2 |
+| S17 | 44.5±5.1  | 39.5±4.0 | 42.5±5.2 |
+| S18 | 44.5±4.3  | 45.5±8.3 | 46.5±9.7 |
+| S19 | 54.5±7.5  | 64.0±8.9 | 56.5±5.8 |
+| S20 | 50.0±8.9  | 60.0±7.6 | 63.0±9.3 |
+| S21 | 61.0±5.4  | 65.0±7.6 | 62.5±5.7 |
+| S22 | 48.0±3.7  | 52.0±7.0 | 43.5±2.5 |
+| S23 | 54.0±5.1  | 64.0±8.6 | 64.5±4.8 |
+| S24 | 51.5±2.0  | 45.5±6.4 | 41.5±6.6 |
+| S25 | 48.5±4.4  | 51.5±6.6 | 50.5±4.8 |
+| S26 | 62.5±6.5  | 68.5±6.2 | 62.5±6.1 |
+| S27 | 50.0±9.6  | 58.0±6.6 | 55.5±4.3 |
+| S28 | 64.5±4.8  | 54.5±5.6 | 64.5±5.6 |
+| S29 | 51.5±3.0  | 54.0±2.5 | 51.0±3.7 |
+| S30 | 56.0±4.4  | 52.5±5.2 | 50.0±2.7 |
+| S31 | 48.5±3.0  | 54.5±11.8 | 59.0±5.6 |
+| S32 | 54.5±4.8  | 54.0±3.0 | 47.5±4.7 |
+| S33 | 47.5±6.5  | 53.0±6.8 | 51.5±7.2 |
+| S34 | 52.0±5.6  | 53.5±6.0 | 55.5±3.3 |
+| S35 | 78.5±3.4  | 84.5±3.7 | 83.5±5.1 |
+| S36 | 51.0±4.1  | 52.5±3.2 | 50.5±4.8 |
+| S37 | 68.5±9.7  | 74.5±3.7 | 76.5±2.0 |
+| S38 | 56.5±6.2  | 54.0±5.6 | 51.0±4.9 |
+| S39 | 51.0±4.6  | 59.5±4.0 | 62.5±7.1 |
+| S40 | 52.5±4.2  | 48.0±5.8 | 44.5±3.7 |
+| S41 | 71.5±5.4  | 76.5±4.1 | 71.0±2.0 |
+| S42 | 44.5±5.1  | 46.5±4.1 | 49.5±3.3 |
+| S43 | 72.5±4.7  | 95.5±2.9 | 93.5±1.2 |
+| S44 | 57.0±4.6  | 72.5±4.5 | 74.0±4.6 |
+| S45 | 49.0±4.9  | 52.0±5.8 | 46.5±3.4 |
+| S46 | 62.9±3.3  | 76.2±5.0 | 76.3±2.5 |
+| S47 | 41.5±7.5  | 47.5±5.7 | 54.0±6.6 |
+| S48 | 56.0±3.4  | 79.0±3.4 | 69.5±5.1 |
+| S49 | 55.0±6.3  | 65.5±7.3 | 66.5±6.4 |
+| S50 | 76.5±3.7  | 86.0±4.6 | 79.5±6.2 |
+| S51 | 52.0±7.3  | 52.5±4.2 | 56.5±5.1 |
+| S52 | 59.5±2.4  | 62.0±4.3 | 57.5±4.5 |
+| **Mean** | **56.8±10.4** | 61.4±12.7 | 60.6±12.5 |
+
+(LDA/SVM cross-subject SD computed post-hoc from the 52 per-subject means,
+population std matching the analyze script's own convention for the FP32
+row — verified by reproducing 56.8±10.4 exactly before trusting 12.7/12.5.)
+
+**Significance tests** (paired t-test + Wilcoxon, n=52, same methodology
+as B6/B11/BNCI2015-001):
+
+| Comparison | mean diff (pp) | SNN wins | t-test p | Wilcoxon p | Verdict |
+|---|---|---|---|---|---|
+| SNN vs LDA | −4.55 | 9/52 | <0.0001 | 0.00001 | **Significant — SNN loses** |
+| SNN vs SVM | −3.75 | 16/52 (2 ties) | 0.00023 | 0.00064 | **Significant — SNN loses** |
+
+**Pattern across all four datasets now complete**: SNN never
+significantly beats LDA anywhere (ties on BNCI2014-001, loses on the
+other three); vs SVM the SNN wins on BNCI2014-001, ties on BNCI2015-001,
+and loses on Cho2017 and Schirrmeister2017. LDA is the consistently
+harder classical baseline across the full dataset collection.
+
+### BNCI2015-001 (2-class, 12 subjects, 13ch, 512Hz) — COMPLETE 2026-07-20
+Job `35532504` (60 tasks, 12 subjects x 5 folds), analyze log
+`logs/fbcsp_analyze_35532517.out`.
+
+| Subj | SNN FP32 | LDA | SVM |
+|---|---|---|---|
+| S1  | 96.9±2.5  | 98.3±0.4 | 95.3±0.8 |
+| S2  | 91.6±3.6  | 94.7±0.4 | 93.1±1.3 |
+| S3  | 89.7±5.2  | 91.5±1.4 | 79.5±6.2 |
+| S4  | 90.1±3.6  | 82.7±4.2 | 88.3±2.8 |
+| S5  | 62.3±5.0  | 80.5±4.1 | 70.2±5.6 |
+| S6  | 58.4±4.8  | 60.8±5.5 | 60.9±6.4 |
+| S7  | 79.5±7.8  | 82.2±2.6 | 64.5±8.7 |
+| S8  | 64.0±5.2  | 64.6±2.7 | 60.8±3.1 |
+| S9  | 69.8±14.6 | 81.3±2.2 | 74.7±6.2 |
+| S10 | 54.3±4.7  | 69.1±2.9 | 60.2±6.2 |
+| S11 | 50.6±0.4  | 52.9±0.8 | 53.0±2.4 |
+| S12 | 58.3±5.4  | 61.7±4.1 | 63.7±6.8 |
+| **Mean** | **72.1±15.8** | 76.7 | 72.0 |
+
+**Significance tests** (paired t-test + Wilcoxon, n=12, same methodology
+as B6/B11):
+
+| Comparison | mean diff (pp) | SNN wins | t-test p | Wilcoxon p | Verdict |
+|---|---|---|---|---|---|
+| SNN vs LDA | −4.57 | 1/12 | 0.0440 | 0.0161 | **Significant — SNN loses** |
+| SNN vs SVM | +0.11 | 5/12 | 0.9570 | 0.7334 | **Not significant — essentially an exact tie** |
+
+**Pattern across all three datasets now complete**: BNCI2014-001 (SNN
+beats SVM, ties LDA), Schirrmeister2017 (SNN loses to both), BNCI2015-001
+(SNN loses to LDA, ties SVM) — LDA is consistently the hardest classical
+baseline to beat; SVM is where the SNN is most competitive. Honest Table V
+framing: SNN is competitive with SVM on BNCI2015-001, same qualitative
+story as BNCI2014-001, unlike Schirrmeister2017 where it loses to both.
 
 ---
 
-## 2. B11 — Ablation study
+## 2. B11 — Ablation study — CORE THREE COMPLETE 2026-07-17, encoder ablation REVISED after fairness check
 
-**Status:** not yet submitted. Compare each against the full-pipeline
-baseline (BNCI2014-001, `Results/`) already in the paper's Table III.
+All three original ablations ran clean on `Results_verify`'s baseline
+(BNCI2014-001, dual-end CSP + adaptive-threshold encoder + Van Rossum loss,
+66.0±13.6% FP32, Table III). 9 subjects × 5 folds each, 135 tasks total,
+**~4,000 BUs** (jobs `35504042`/`35504053`/`35504076`, analyze logs
+`35504052`/`35504063`/`35504086`).
 
-### Single-end CSP (`--csp-single-end`)
-*(paste `summary.csv` here — compare mean accuracy vs. dual-end baseline)*
+| Ablation | SNN FP32 (mean±SD) | Δ vs. baseline | LDA | SVM |
+|---|---|---|---|---|
+| **Full pipeline (baseline)** | **66.0±13.6%** | — | 60.6% | 59.3% |
+| Single-end CSP (`--csp-single-end`) | 59.2±10.3% | −6.8 pp | 57.7% | 55.1% |
+| Fixed encoder @ 0.001 (`--encoder-type fixed`) | 25.6±0.7% | −40.4 pp | 60.6% | 59.3% |
+| Cross-entropy loss (`--loss-type cross_entropy`) | 61.6±12.7% | −4.4 pp | 60.6% | 59.3% |
 
-### Fixed-threshold encoder (`--encoder-type fixed`)
-*(paste `summary.csv` here — compare vs. adaptive-threshold baseline)*
+Per-subject FP32 (S1..S9), used for the significance tests below:
+- Baseline: 83.2, 49.9, 75.3, 62.6, 47.1, 49.4, 67.5, 78.7, 80.2
+- Single-end CSP: 73.5, 51.0, 67.7, 54.8, 47.0, 44.1, 55.6, 70.6, 68.1
+- Fixed encoder @0.001: 26.5, 25.4, 26.9, 25.0, 25.4, 24.4, 25.1, 26.0, 25.4
+- Cross-entropy loss: 79.4, 45.8, 73.4, 57.3, 47.8, 43.0, 71.9, 68.3, 67.6
 
-### Cross-entropy loss (`--loss-type cross_entropy`)
-*(paste `summary.csv` here — compare vs. Van Rossum baseline)*
+**Control check confirming clean isolation, not a bug:** LDA/SVM are
+*exactly* unchanged from baseline (60.6%/59.3%) in the encoder and loss
+ablations — correct, since classical baselines never touch the spike
+encoder or loss function. They *do* move in the CSP ablation (57.7%/55.1%),
+correctly reflecting that CSP mode changes the features every classifier
+consumes, SNN or not.
+
+**Significance tests** (`sig_test_ablation.py`, repo root — paired t-test +
+Wilcoxon signed-rank, n=9, same methodology as B6):
+
+| Ablation | mean diff (pp) | paired t-test p | Wilcoxon p | Verdict |
+|---|---|---|---|---|
+| Single-end CSP | +6.83 | 0.0024 | 0.0117 | Significant |
+| Fixed encoder @0.001 | +40.4 | ≈0.0000 | 0.0039 | Highly significant |
+| Cross-entropy loss | +4.4 | 0.0361 | 0.0547 | **Borderline — not significant** (Wilcoxon, the more trustworthy test at n=9 per B6 precedent, misses p<0.05) |
+
+### Fairness check on the encoder ablation — the 0.001 result does NOT mean "adaptivity is essential"
+
+**Raised by the user, confirmed by follow-up experiment 2026-07-17:** the
+fixed-threshold ablation held `base_thresh` at `0.001` — the adaptive
+encoder's *starting* value, not its *operating* value. A local numpy
+simulation of the real adaptive dynamics (`threshold = threshold*0.95 +
+fired*0.6`, realistic autocorrelated z-normalised signal, T=1001) shows the
+adaptive threshold spends almost all of its time far above 0.001:
+
+```
+mean = 0.90, median = 0.89, p10-p90 = 0.59-1.23, min-max = 0.24-2.02
+```
+
+So the 0.001 ablation was testing "threshold frozen at a value the adaptive
+version almost never uses," not "no adaptivity, otherwise reasonable
+threshold." A proper fairness test needs a fixed threshold from a realistic
+range instead. Three follow-up runs (same 45-task/2h-budget cost profile,
+`--encoder-type fixed --base-thresh <value>`, ~1,333 BUs each):
+
+| Fixed threshold | SNN FP32 | vs. baseline (66.0%) | vs. adaptive range |
+|---|---|---|---|
+| 0.001 (original) | 25.6±0.7% | −40.4 pp | Far below (starting value only) |
+| 0.3 | **66.8±14.2%** | **+0.8 pp** | Below p10 |
+| 0.9 | 60.9±11.6% | −5.1 pp | At the median |
+| 1.5 | 51.0±6.7% | −15.0 pp | Above p90 |
+
+Analyze logs: `35513631` (0.3), `35513642` (0.9), `35513653` (1.5).
+
+Per-subject FP32 (S1..S9), pasted 2026-07-19:
+- 0.3: 83.9, 49.8, 78.8, 56.0, 48.8, 52.9, 66.5, 82.4, 81.7
+- 0.9: 75.8, 52.4, 61.1, 65.3, 41.2, 44.4, 68.6, 65.9, 73.2
+- 1.5: 60.4, 46.7, 47.8, 53.8, 40.8, 41.7, 57.2, 52.6, 58.2
+
+Two more points added 2026-07-19 (0.01, 0.1 — analyze logs `35516146`,
+`35516182`), completing a 6-point sweep from 0.001 to 1.5. Per-subject
+FP32 (S1..S9):
+- 0.01: 47.7, 26.8, 58.8, 26.9, 25.1, 27.0, 27.2, 42.4, 44.9 (mean 36.3±11.7%)
+- 0.1: 82.3, 43.2, 79.5, 50.3, 39.5, 45.2, 61.3, 78.9, 79.2 (mean 62.2±16.9%)
+
+**Full significance table vs. the 66.0% adaptive baseline** (paired t-test
++ Wilcoxon, n=9, same methodology as B6/B11):
+
+| Fixed threshold | SNN FP32 | mean diff (baseline−ablation, pp) | t-test p | Wilcoxon p | Verdict |
+|---|---|---|---|---|---|
+| 0.001 | 25.6±0.7% | +40.4 | ≈0.0000 | 0.0039 | Significant |
+| 0.01 | 36.3±11.7% | +29.7 | ≈0.0000 | 0.0039 | Significant |
+| 0.1 | 62.2±16.9% | +3.8 | 0.0492 | 0.0547 | Not significant (borderline) |
+| 0.3 | 66.8±14.2% | −0.8 (ablation nominally better) | 0.4957 | 0.2891 | **Not significant — closest match** |
+| 0.9 | 60.9±11.6% | +5.1 | 0.0388 | 0.0547 | Not significant (borderline) |
+| 1.5 | 51.0±6.7% | +15.0 | 0.0015 | 0.0039 | Significant |
+
+**Revised finding, now fully characterized:** there is a genuine "safe
+zone" of statistical indistinguishability from adaptive spanning roughly
+0.1–0.9 (three consecutive points all fail to reach significance by
+Wilcoxon), bounded on both sides by significant degradation — below ~0.05
+(0.01 and 0.001 both significant) and above ~0.9 (1.5 significant). 0.3
+sits closest to the center of that safe zone and is the best point
+estimate. The 0.001 collapse was a magnitude problem, not proof adaptivity
+itself is required — but going too low (0.01) or too high (1.5) is a
+*proven*, not just nominal, disadvantage. This is a demonstrated *range*
+of workable constants, not one lucky point, which is stronger evidence for
+the corrected framing (adaptivity self-calibrates within/near this range
+rather than reaching otherwise-unreachable accuracy) than a single
+comparison could give. Notably 0.9 — the adaptive threshold's own
+empirical median — trends worse than 0.3 in raw means (though this
+specific pair hasn't been directly tested against each other, only each
+vs. the adaptive baseline), so the benefit isn't simply "operate near the
+adaptive mechanism's average magnitude."
+
+**Corrected framing for the paper (supersedes the original "adaptivity is
+essential" claim):** adaptivity's real, defensible benefit is
+*self-calibration*, not an accuracy ceiling nothing else can reach. The
+only reason 0.3 is known to work is that it was reverse-engineered from
+simulating the adaptive dynamics first; in a genuine blind-deployment
+scenario (new subject, different channel scaling, a new dataset), there
+would be no way to know 0.3 is the right constant without either running
+the adaptive version first or getting lucky. This is a stronger,
+more defensible claim than "adaptivity is necessary for accuracy" and
+should replace it in the ablation write-up.
+
+**Not yet done:** optionally 1-2 more points between 0.001 and 0.3 to pin
+down the true peak (budget is not the constraint — ~86,000 BUs remained as
+of 2026-07-17, ~78,000 after this sweep); a direct paired test of 0.3 vs.
+0.9 (each has so far only been tested against the adaptive baseline
+separately, not against each other); writing this into `main.tex`.
 
 ---
 
