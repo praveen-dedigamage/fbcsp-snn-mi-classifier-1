@@ -91,74 +91,101 @@ def main() -> None:
     print(f"  bands={bands}  sfreq={sfreq}  encoder={encoder_type}  "
           f"loss_type={args.loss_type}")
 
-    print(f"Loading raw MOABB data: {args.moabb_dataset}, "
-          f"subject {args.subject_id} ...")
-    X_train, y_train, X_test, y_test = load_moabb(
-        args.moabb_dataset, args.subject_id
-    )
-
-    # Reproduce the EXACT train/val split the SNN's own training run used.
-    splitter = StratifiedKFold(
-        n_splits=args.n_folds, shuffle=True, random_state=42
-    )
-    for fold_idx, (tr_idx, val_idx) in enumerate(
-        splitter.split(X_train, y_train)
-    ):
-        if fold_idx == args.fold:
-            break
+    # The preprocessing chain below (raw load -> filter bank -> saved CSP ->
+    # saved z-norm -> encode -> saved MIBIF) is IDENTICAL regardless of
+    # --loss-type -- only the model training that follows differs. Cache it
+    # once per fold so a second --loss-type run (e.g. cross_entropy after
+    # van_rossum already ran) skips straight to training instead of
+    # redoing several minutes of identical CPU-side work for nothing.
+    cache_path = os.path.join(fold_dir, "ann_twin_inputs.pt")
+    if os.path.exists(cache_path):
+        print(f"Loading cached preprocessed inputs from {cache_path} "
+              f"(shared across --loss-type runs, computed once) ...")
+        cache = torch.load(cache_path, weights_only=False)
+        spikes_tr, spikes_val, spikes_te = (
+            cache["spikes_tr"], cache["spikes_val"], cache["spikes_te"]
+        )
+        y_f_tr_0, y_f_val_0, y_test_0 = (
+            cache["y_f_tr_0"], cache["y_f_val_0"], cache["y_test_0"]
+        )
     else:
-        raise ValueError(f"Fold {args.fold} not found (n_folds={args.n_folds})")
+        print(f"No cache at {cache_path} -- computing (will be cached for "
+              f"any other --loss-type run of this same fold) ...")
+        print(f"Loading raw MOABB data: {args.moabb_dataset}, "
+              f"subject {args.subject_id} ...")
+        X_train, y_train, X_test, y_test = load_moabb(
+            args.moabb_dataset, args.subject_id
+        )
 
-    X_f_tr,  y_f_tr  = X_train[tr_idx],  y_train[tr_idx]
-    X_f_val, y_f_val = X_train[val_idx], y_train[val_idx]
+        # Reproduce the EXACT train/val split the SNN's own training run used.
+        splitter = StratifiedKFold(
+            n_splits=args.n_folds, shuffle=True, random_state=42
+        )
+        for fold_idx, (tr_idx, val_idx) in enumerate(
+            splitter.split(X_train, y_train)
+        ):
+            if fold_idx == args.fold:
+                break
+        else:
+            raise ValueError(f"Fold {args.fold} not found (n_folds={args.n_folds})")
 
-    print("Applying filter bank + SAVED (fitted) CSP + SAVED (fitted) "
-          "z-norm to train/val/test ...")
-    Xb_tr  = apply_filter_bank(X_f_tr,  bands, sfreq)
-    Xb_val = apply_filter_bank(X_f_val, bands, sfreq)
-    Xb_te  = apply_filter_bank(X_test,  bands, sfreq)
+        X_f_tr,  y_f_tr  = X_train[tr_idx],  y_train[tr_idx]
+        X_f_val, y_f_val = X_train[val_idx], y_train[val_idx]
 
-    proj_tr  = csp.transform(Xb_tr)
-    proj_val = csp.transform(Xb_val)
-    proj_te  = csp.transform(Xb_te)
+        print("Applying filter bank + SAVED (fitted) CSP + SAVED (fitted) "
+              "z-norm to train/val/test ...")
+        Xb_tr  = apply_filter_bank(X_f_tr,  bands, sfreq)
+        Xb_val = apply_filter_bank(X_f_val, bands, sfreq)
+        Xb_te  = apply_filter_bank(X_test,  bands, sfreq)
 
-    X_concat_tr  = _concat_projections(proj_tr).astype(np.float32)
-    X_concat_val = _concat_projections(proj_val).astype(np.float32)
-    X_concat_te  = _concat_projections(proj_te).astype(np.float32)
-    del Xb_tr, Xb_val, Xb_te, proj_tr, proj_val, proj_te
+        proj_tr  = csp.transform(Xb_tr)
+        proj_val = csp.transform(Xb_val)
+        proj_te  = csp.transform(Xb_te)
 
-    X_norm_tr  = znorm.transform(X_concat_tr)
-    X_norm_val = znorm.transform(X_concat_val)
-    X_norm_te  = znorm.transform(X_concat_te)
-    del X_concat_tr, X_concat_val, X_concat_te
+        X_concat_tr  = _concat_projections(proj_tr).astype(np.float32)
+        X_concat_val = _concat_projections(proj_val).astype(np.float32)
+        X_concat_te  = _concat_projections(proj_te).astype(np.float32)
+        del Xb_tr, Xb_val, Xb_te, proj_tr, proj_val, proj_te
 
-    print(f"Encoding spikes (base_thresh={args.base_thresh}, "
-          f"adapt_inc={args.adapt_inc}, decay={args.decay}) ...")
-    spikes_tr  = encode_tensor(
-        torch.from_numpy(X_norm_tr).permute(2, 0, 1),
-        args.base_thresh, args.adapt_inc, args.decay, encoder_type,
-    )
-    spikes_val = encode_tensor(
-        torch.from_numpy(X_norm_val).permute(2, 0, 1),
-        args.base_thresh, args.adapt_inc, args.decay, encoder_type,
-    )
-    spikes_te  = encode_tensor(
-        torch.from_numpy(X_norm_te).permute(2, 0, 1),
-        args.base_thresh, args.adapt_inc, args.decay, encoder_type,
-    )
-    del X_norm_tr, X_norm_val, X_norm_te
+        X_norm_tr  = znorm.transform(X_concat_tr)
+        X_norm_val = znorm.transform(X_concat_val)
+        X_norm_te  = znorm.transform(X_concat_te)
+        del X_concat_tr, X_concat_val, X_concat_te
 
-    if mibif is not None:
-        spikes_tr  = mibif.transform(spikes_tr)
-        spikes_val = mibif.transform(spikes_val)
-        spikes_te  = mibif.transform(spikes_te)
+        print(f"Encoding spikes (base_thresh={args.base_thresh}, "
+              f"adapt_inc={args.adapt_inc}, decay={args.decay}) ...")
+        spikes_tr  = encode_tensor(
+            torch.from_numpy(X_norm_tr).permute(2, 0, 1),
+            args.base_thresh, args.adapt_inc, args.decay, encoder_type,
+        )
+        spikes_val = encode_tensor(
+            torch.from_numpy(X_norm_val).permute(2, 0, 1),
+            args.base_thresh, args.adapt_inc, args.decay, encoder_type,
+        )
+        spikes_te  = encode_tensor(
+            torch.from_numpy(X_norm_te).permute(2, 0, 1),
+            args.base_thresh, args.adapt_inc, args.decay, encoder_type,
+        )
+        del X_norm_tr, X_norm_val, X_norm_te
+
+        if mibif is not None:
+            spikes_tr  = mibif.transform(spikes_tr)
+            spikes_val = mibif.transform(spikes_val)
+            spikes_te  = mibif.transform(spikes_te)
+
+        y_f_tr_0  = y_f_tr  - 1
+        y_f_val_0 = y_f_val - 1
+        y_test_0  = y_test  - 1
+
+        torch.save({
+            "spikes_tr": spikes_tr, "spikes_val": spikes_val, "spikes_te": spikes_te,
+            "y_f_tr_0": y_f_tr_0, "y_f_val_0": y_f_val_0, "y_test_0": y_test_0,
+        }, cache_path)
+        print(f"  Cached preprocessed inputs to {cache_path}")
+
     n_input = spikes_tr.shape[2]
     print(f"  n_input={n_input}  T={spikes_tr.shape[0]}  "
           f"(SAME spike-encoded input the SNN received for this fold)")
-
-    y_f_tr_0  = y_f_tr  - 1
-    y_f_val_0 = y_f_val - 1
-    y_test_0  = y_test  - 1
 
     print(f"Training ANNClassifier (non-spiking twin, loss={args.loss_type}) ...")
     model = ANNClassifier(
