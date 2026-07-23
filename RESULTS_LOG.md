@@ -10,6 +10,205 @@ final and copied into the paper.
 
 ---
 
+## SESSION CHECKPOINT — 2026-07-24, read this first
+
+**Why this exists:** user asked to secure everything before context got
+compacted. This is a full inventory of file locations, what's done, what's
+running, and what open decisions are still on the table.
+
+### File locations
+- **Paper** (NOT a git repo, plain folder): `C:\Users\USER\Desktop\ieee_tnsre_paper\main.tex`
+  (compiles to `main.pdf`, currently 14 pages). `main_placeholder_refs.tex` is
+  a separate citation-stripped copy made for supervisor review earlier — not
+  touched since, do not confuse with `main.tex`.
+- **Code** (this repo, branch `claude/hungry-neumann`, pushed to
+  `https://github.com/praveen-dedigamage/fbcsp-snn-mi-classifier-1`):
+  - `fbcsp_snn/fair_baseline.py` — fair-baseline classifiers (PCA+LDA, linear SVM,
+    optional MI-selection via `select_by_mutual_information`)
+  - `run_fair_baseline.py` / `run_fair_baseline_array.sh` / `submit_fair_baseline.sh` —
+    per-fold script / SLURM array / submit wrapper for the fair-baseline (CPU-only,
+    "small" partition)
+  - `aggregate_fair_baseline.py` — aggregates `fair_baseline_results.json` per fold
+  - `fbcsp_snn/model.py::ANNClassifier` — non-spiking twin of `SNNClassifier`
+  - `run_ann_twin.py` / `run_ann_twin_array.sh` / `submit_ann_twin.sh` /
+    `submit_ann_twin_pair.sh` — per-fold script / SLURM array / single-loss submit /
+    dependency-chained both-loss submit for the ANN twin (GPU, "gpu" partition)
+  - `aggregate_ann_twin.py` — aggregates `ann_twin_{loss_type}_results.json` per fold
+  - `plot_snn_raster_real.py`, `plot_pipeline_dimensionality.py` — real-data figures
+    already in the paper (Fig. 3, Fig. 5/appendix)
+
+### What's DONE (numbers already in the paper, verified compiling)
+- Main pipeline (SNN log-variance baselines) on all 4 datasets — Tables III/IV/V
+- Fairness-controlled baseline (LDA/SVM on full time-series) on all 4 datasets — Table VIII
+  (full per-subject data logged below, was previously ONLY summarized in-conversation)
+- ANN twin (non-spiking, VR + CE losses) on BNCI2014-001, Cho2017, BNCI2015-001 — Table IX
+  (full per-subject data logged below, was previously ONLY summarized in-conversation)
+
+### What's RUNNING right now
+- **Schirrmeister2017 ANN twin**: jobs `35559000` (van_rossum) → `35559001`
+  (cross_entropy, chained via `--dependency=afterany`), 16h wall time, submitted
+  2026-07-23 ~23:35. Not yet aggregated. Once done:
+  ```
+  python aggregate_ann_twin.py --results-dir Results_schirrmeister_verify --loss-type van_rossum --subjects 1 2 3 4 5 6 7 8 9 10 11 12 13 14
+  python aggregate_ann_twin.py --results-dir Results_schirrmeister_verify --loss-type cross_entropy --subjects 1 2 3 4 5 6 7 8 9 10 11 12 13 14
+  ```
+  This is the last cell in Table IX (currently `\TODO{}` for ANN+VR/ANN+CE;
+  SNN+VR=62.9±10.5 already filled in, SNN+CE is `---`, never run on this dataset).
+
+### Open decisions NOT yet acted on
+1. **User's current concern (2026-07-24): "tables are a mess, will need my
+   attention."** Specifically raised: should Table VIII (fairness LDA/SVM) and
+   Table IX (ANN twin) be merged into one wide table (SNN, LDA, SVM, ANN+VR,
+   ANN+CE)? I gave reasoning for keeping them separate (different confounds
+   being ruled out: information symmetry vs. architecture; a merged table would
+   need ~14-16 columns). User has not yet decided; this is unresolved and the
+   user said they will personally revisit table structure. **Do not
+   unilaterally restructure the tables** — wait for explicit direction.
+2. **ANN-twin's binary-dataset reversal is not yet fully resolved.** On
+   BNCI2014-001, SNN+VR beats ANN+CE decisively. On Cho2017 and BNCI2015-001,
+   ANN+CE *significantly beats* SNN+VR instead (small margins, ~1.7pp, but
+   real: p<0.032 both). User pushed back that the current paper prose reads
+   like "admitting defeat without a proper challenge" — pointed out the SNN's
+   hyperparameters have never been tuned per-dataset (unlike SVM's per-fold
+   grid search), so it's not established whether the reversal is a genuine
+   architectural finding or just an untuned SNN on binary tasks. Two options
+   discussed, neither yet chosen: (a) soften the prose's framing only (no new
+   experiments), or (b) actually attempt to tune the SNN specifically for the
+   binary datasets before concluding anything. **Waiting on user's choice.**
+   Note: option (b) would cascade far beyond Table IX if it changes the SNN's
+   own accuracy — Table V, Table VIII, Table IX, Abstract, Conclusion, and the
+   Section V-C significance tests all cite the same 56.8%/72.1% numbers.
+3. **references.bib citation-verification TODOs** — still unresolved (Moakher
+   page numbers, 4 hardware-noise-citation author lists, one more
+   training-data-recollection entry, one dead unused entry `sun2022eeg_snn`).
+   Flagged early in the session, never actioned since — separate from all the
+   above, purely a bibliography housekeeping item.
+4. Author biography paragraphs — still `\TODO{Biography text here.}` x3.
+
+---
+
+## -1. Fairness-Controlled Baseline (full time-series LDA/SVM) — Table VIII
+
+**Status: COMPLETE, all four datasets, already in the paper.** This section
+did not exist in the log before — numbers were only ever stated in
+conversation. Reconstructed here in full from the actual pasted Puhti output.
+
+Script: `run_fair_baseline.py` (reuses saved CSP/z-norm per fold, flattens the
+continuous pre-encoding z-normalised time series, fits PCA+LDA and linear SVM).
+Submitted via `submit_fair_baseline.sh <results_dir> <dataset> <n_subjects>`
+(CPU-only, "small" partition).
+
+### BNCI2014-001 (n=9)
+| Subj | LDA-fullts | SVM-fullts |
+|---|---|---|
+| S1 | 29.4±1.6 | 27.8±0.9 |
+| S2 | 29.0±0.8 | 31.3±1.7 |
+| S3 | 28.5±1.9 | 27.2±1.9 |
+| S4 | 37.1±1.6 | 37.2±1.1 |
+| S5 | 36.7±1.4 | 33.9±2.2 |
+| S6 | 28.5±2.2 | 28.9±3.1 |
+| S7 | 32.9±1.5 | 32.3±1.7 |
+| S8 | 25.3±3.1 | 24.0±2.0 |
+| S9 | 29.2±1.9 | 29.4±0.9 |
+| **Mean** | **30.7±3.8** | **30.2±3.7** |
+
+Significance vs SNN (66.0±13.6): vs LDA +35.3pp, t=0.0002, Wilcoxon=0.0039,
+SNN wins 9/9. vs SVM +35.8pp, t=0.0002, Wilcoxon=0.0039, SNN wins 9/9.
+
+### Schirrmeister2017 (n=14) — final, after Subject 2 resubmit for full 5/5 folds
+| Subj | LDA-fullts | SVM-fullts |
+|---|---|---|
+| S1 | 25.6±3.1 | 26.9±5.1 |
+| S2 | 25.2±2.2 | 24.2±0.4 |
+| S3 | 25.9±1.5 | 27.4±0.9 |
+| S4 | 24.5±2.4 | 24.5±1.2 |
+| S5 | 26.5±4.4 | 28.2±3.9 |
+| S6 | 28.4±2.5 | 28.0±2.3 |
+| S7 | 26.0±3.4 | 27.2±1.2 |
+| S8 | 26.5±1.8 | 23.3±3.6 |
+| S9 | 25.9±1.5 | 30.8±1.3 |
+| S10 | 23.9±2.5 | 22.8±2.4 |
+| S11 | 27.7±2.9 | 27.6±1.8 |
+| S12 | 31.8±3.3 | 28.1±2.5 |
+| S13 | 27.6±3.6 | 30.5±2.8 |
+| S14 | 26.3±1.0 | 27.7±1.8 |
+| **Mean** | **26.6±1.9** | **26.9±2.3** |
+
+Significance vs SNN (62.9±10.5): vs LDA +36.4pp, t<0.0001, Wilcoxon=0.0001,
+SNN wins 14/14. vs SVM +36.0pp, t<0.0001, Wilcoxon=0.0001, SNN wins 14/14.
+
+### Cho2017 (n=52)
+| Subj | LDA-fullts | SVM-fullts | Subj | LDA-fullts | SVM-fullts |
+|---|---|---|---|---|---|
+| S1 | 51.0±3.7 | 49.5±2.9 | S27 | 50.0±5.7 | 47.5±6.5 |
+| S2 | 48.5±2.5 | 45.5±5.3 | S28 | 48.0±2.9 | 46.5±3.4 |
+| S3 | 46.5±2.0 | 49.0±4.1 | S29 | 54.0±6.4 | 54.0±8.2 |
+| S4 | 57.5±3.2 | 59.0±5.8 | S30 | 52.0±1.9 | 52.0±1.9 |
+| S5 | 53.0±4.3 | 55.5±7.3 | S31 | 48.5±8.0 | 51.5±6.0 |
+| S6 | 49.0±6.0 | 47.5±8.5 | S32 | 52.0±6.4 | 53.0±9.3 |
+| S7 | 50.4±2.8 | 49.6±4.0 | S33 | 48.5±5.4 | 53.5±4.6 |
+| S8 | 58.5±4.6 | 55.5±3.3 | S34 | 55.0±9.1 | 54.5±7.0 |
+| S9 | 43.8±4.0 | 42.1±5.7 | S35 | 51.5±4.1 | 51.0±5.1 |
+| S10 | 50.0±3.2 | 48.5±4.9 | S36 | 47.0±6.0 | 49.0±3.7 |
+| S11 | 48.5±6.0 | 45.5±5.8 | S37 | 50.5±5.3 | 48.5±4.4 |
+| S12 | 45.5±5.1 | 43.5±6.0 | S38 | 46.0±5.4 | 44.0±6.6 |
+| S13 | 42.0±2.9 | 43.5±4.1 | S39 | 47.5±4.7 | 48.5±7.2 |
+| S14 | 45.0±3.5 | 47.0±2.9 | S40 | 53.0±8.3 | 52.0±8.3 |
+| S15 | 53.5±3.4 | 53.5±6.0 | S41 | 48.5±7.2 | 54.0±8.6 |
+| S16 | 55.0±4.2 | 56.5±4.1 | S42 | 49.5±4.6 | 52.0±6.2 |
+| S17 | 49.5±7.0 | 48.0±8.4 | S43 | 49.0±5.8 | 51.5±6.4 |
+| S18 | 59.0±3.7 | 60.5±3.3 | S44 | 48.5±4.6 | 49.5±7.0 |
+| S19 | 58.5±2.5 | 57.0±5.3 | S45 | 45.5±4.8 | 48.5±5.6 |
+| S20 | 53.5±7.2 | 54.5±8.0 | S46 | 42.5±4.1 | 43.3±4.6 |
+| S21 | 48.5±3.4 | 49.5±2.9 | S47 | 46.0±5.1 | 44.5±7.0 |
+| S22 | 53.0±3.7 | 51.5±3.0 | S48 | 50.5±5.1 | 53.0±6.8 |
+| S23 | 50.0±3.2 | 50.0±5.2 | S49 | 51.5±10.6 | 49.5±8.6 |
+| S24 | 56.0±3.4 | 55.0±4.5 | S50 | 41.0±6.4 | 43.0±6.2 |
+| S25 | 45.5±6.6 | 43.5±5.1 | S51 | 48.0±10.3 | 48.5±8.5 |
+| S26 | 43.0±5.3 | 45.5±6.8 | S52 | 59.0±4.6 | 53.5±6.0 |
+| **Mean** | **49.9±4.4** | **50.0±4.3** | | | |
+
+Significance vs SNN (56.8±10.4): vs LDA +6.9pp, t=0.0002, Wilcoxon=0.0006,
+SNN wins 34/52. vs SVM +6.8pp, t=0.0001, Wilcoxon=0.0004, SNN wins 37/52.
+
+### BNCI2015-001 (n=12)
+| Subj | LDA-fullts | SVM-fullts |
+|---|---|---|
+| S1 | 49.2±3.1 | 48.0±1.3 |
+| S2 | 59.7±1.5 | 59.2±1.4 |
+| S3 | 56.2±4.8 | 56.7±3.5 |
+| S4 | 54.0±2.9 | 53.3±2.9 |
+| S5 | 54.0±1.4 | 53.6±2.4 |
+| S6 | 47.5±0.9 | 48.7±2.7 |
+| S7 | 54.3±3.1 | 53.0±3.6 |
+| S8 | 54.6±3.0 | 55.0±2.9 |
+| S9 | 55.0±2.8 | 53.7±2.1 |
+| S10 | 47.9±1.5 | 46.7±3.5 |
+| S11 | 52.4±1.0 | 50.9±2.6 |
+| S12 | 51.7±2.5 | 50.1±2.8 |
+| **Mean** | **53.0±3.4** | **52.4±3.5** |
+
+Significance vs SNN (72.1±15.8): vs LDA +19.1pp, t=0.0012, Wilcoxon=0.0010,
+SNN wins 11/12. vs SVM +19.7pp, t=0.0009, Wilcoxon=0.0010, SNN wins 11/12.
+
+### MI-selection variant (supervised feature selection, mirroring MIBIF) — tested once, NOT run at scale
+`select_by_mutual_information` added to `fair_baseline.py`: mirrors
+`MIBIFSelector`'s exact method (`mutual_info_classif`, `mi_fraction=0.1`
+threshold) applied to the flattened time-series dimensions, to rule out
+"PCA is unsupervised and might discard discriminative directions" as a
+confound. Tested once, BNCI2014-001 Subject 1 Fold 0 only:
+- 288,288 → 81,085 dimensions kept (28.1%)
+- LDA: val=27.6%, test=28.1% (vs. PCA-only 27.6%/28.8% — essentially unchanged)
+- SVM: val=32.8%, test=29.9% (vs. PCA-only 28.8% — marginal improvement)
+- **Cost: ~15.5 minutes just for the MI computation on this one fold** (vs.
+  under a minute for PCA) — confirmed via `Get-Process` CPU time while running.
+- **Decision made:** not run at scale (4 datasets × many folds would be very
+  expensive for a result that doesn't change the conclusion). PCA-only results
+  above are final. This single-fold check just confirms the near-chance
+  fair-baseline result isn't a PCA artifact.
+
+---
+
 ## 0. ANN twin (non-spiking) -- isolating the spiking mechanism (2026-07-23/24)
 
 **Status:** BNCI2014-001 COMPLETE (from earlier); Cho2017 COMPLETE
@@ -30,6 +229,21 @@ SNN+VR 66.0±13.6, SNN+CE 61.6±12.7 (existing Table VI ablation), ANN+VR
 27.8±2.4, ANN+CE 51.5±11.7. SNN+VR beats both ANN variants decisively
 (vs ANN+VR: +38.2pp, 9/9, p<0.0001; vs ANN+CE: +14.5pp, 9/9, p=0.0003).
 
+Per-subject (from `aggregate_ann_twin.py --results-dir Results_verify`):
+
+| Subj | ANN+VR | ANN+CE |
+|---|---|---|
+| S1 | 29.4 | 66.2 |
+| S2 | 25.9 | 44.9 |
+| S3 | 27.8 | 62.2 |
+| S4 | 24.7 | 41.6 |
+| S5 | 25.0 | 37.0 |
+| S6 | 28.8 | 33.6 |
+| S7 | 27.1 | 63.5 |
+| S8 | 29.1 | 53.3 |
+| S9 | 32.6 | 61.2 |
+| **Mean** | **27.8±2.4** | **51.5±11.7** |
+
 ### Cho2017 (n=52) -- COMPLETE 2026-07-24
 Jobs: van_rossum 35547346-equivalent chain (see submit history above),
 ANN-twin van_rossum + cross_entropy submitted via `submit_ann_twin_pair.sh
@@ -40,6 +254,38 @@ Results_cho2017 Cho2017 52`.
 | SNN + VR (full pipeline, already reported) | 56.8 ± 10.4 |
 | ANN + VR (new) | 51.1 ± 3.4 |
 | ANN + CE (new) | **58.5 ± 12.0** |
+
+Per-subject:
+
+| Subj | ANN+VR | ANN+CE | Subj | ANN+VR | ANN+CE |
+|---|---|---|---|---|---|
+| S1 | 47.5 | 64.0 | S27 | 51.0 | 57.5 |
+| S2 | 54.5 | 50.0 | S28 | 55.0 | 62.0 |
+| S3 | 57.5 | 86.5 | S29 | 50.0 | 43.5 |
+| S4 | 49.5 | 73.5 | S30 | 56.5 | 53.5 |
+| S5 | 51.0 | 68.0 | S31 | 51.0 | 56.0 |
+| S6 | 52.0 | 66.0 | S32 | 48.5 | 50.0 |
+| S7 | 49.6 | 55.0 | S33 | 43.0 | 50.0 |
+| S8 | 55.5 | 47.5 | S34 | 50.0 | 51.0 |
+| S9 | 49.6 | 50.8 | S35 | 52.0 | 83.0 |
+| S10 | 50.0 | 56.5 | S36 | 46.0 | 47.0 |
+| S11 | 54.5 | 52.5 | S37 | 47.0 | 72.5 |
+| S12 | 51.0 | 54.5 | S38 | 46.5 | 45.5 |
+| S13 | 61.5 | 61.5 | S39 | 49.0 | 51.5 |
+| S14 | 51.0 | 90.5 | S40 | 52.0 | 43.5 |
+| S15 | 50.0 | 49.0 | S41 | 51.5 | 70.5 |
+| S16 | 55.0 | 54.0 | S42 | 44.5 | 47.0 |
+| S17 | 51.0 | 47.5 | S43 | 49.5 | 90.0 |
+| S18 | 51.0 | 44.5 | S44 | 54.5 | 62.5 |
+| S19 | 50.5 | 60.5 | S45 | 52.5 | 48.0 |
+| S20 | 48.5 | 56.0 | S46 | 55.8 | 72.1 |
+| S21 | 45.0 | 58.5 | S47 | 53.0 | 54.5 |
+| S22 | 52.5 | 48.5 | S48 | 47.5 | 71.0 |
+| S23 | 52.0 | 60.0 | S49 | 54.0 | 61.0 |
+| S24 | 54.0 | 44.0 | S50 | 53.5 | 77.5 |
+| S25 | 49.0 | 46.5 | S51 | 49.5 | 50.0 |
+| S26 | 50.0 | 65.5 | S52 | 49.5 | 61.5 |
+| **Mean** | **51.1±3.4** | **58.5±12.0** | | | |
 
 Significance (n=52, paired t-test / Wilcoxon vs SNN+VR):
 - SNN+VR vs ANN+VR: SNN wins, +5.75pp, 36/52 subjects, p=0.000237 / p=0.000802 (significant)
@@ -54,6 +300,24 @@ Jobs: van_rossum 35558176, cross_entropy 35558177 (chained).
 | SNN + VR (full pipeline, already reported) | 72.1 ± 15.8 |
 | ANN + VR (new) | 50.4 ± 2.7 |
 | ANN + CE (new) | **73.8 ± 15.0** |
+
+Per-subject:
+
+| Subj | ANN+VR | ANN+CE |
+|---|---|---|
+| S1 | 49.5 | 96.8 |
+| S2 | 56.6 | 93.0 |
+| S3 | 55.1 | 90.3 |
+| S4 | 48.0 | 90.4 |
+| S5 | 47.6 | 66.2 |
+| S6 | 50.8 | 59.2 |
+| S7 | 49.7 | 79.5 |
+| S8 | 50.3 | 64.4 |
+| S9 | 47.5 | 73.3 |
+| S10 | 49.4 | 60.6 |
+| S11 | 51.3 | 50.8 |
+| S12 | 48.7 | 60.9 |
+| **Mean** | **50.4±2.7** | **73.8±15.0** |
 
 Significance (n=12):
 - SNN+VR vs ANN+VR: SNN wins, +21.75pp, 11/12 subjects, p=0.000568 / p=0.000977 (significant)
