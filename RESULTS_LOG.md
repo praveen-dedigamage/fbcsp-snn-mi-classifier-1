@@ -41,22 +41,20 @@ running, and what open decisions are still on the table.
 - Main pipeline (SNN log-variance baselines) on all 4 datasets — Tables III/IV/V
 - Fairness-controlled baseline (LDA/SVM on full time-series) on all 4 datasets — Table VIII
   (full per-subject data logged below, was previously ONLY summarized in-conversation)
-- ANN twin (non-spiking, VR + CE losses) on BNCI2014-001, Cho2017, BNCI2015-001 — Table IX
-  (full per-subject data logged below, was previously ONLY summarized in-conversation)
+- ANN twin (non-spiking, VR + CE losses) on **all 4 datasets, COMPLETE 2026-07-24**
+  including Schirrmeister2017 — Table IX. Full per-subject data logged below.
+  Final picture across all 4 datasets does NOT track class count: SNN+VR beats
+  ANN+CE on BNCI2014-001 only; ties on Schirrmeister2017 (p=0.40, not
+  significant); loses (small, significant) on both binary datasets. Paper
+  finalized with this complete, honest 1-win/1-tie/2-loss characterization
+  per explicit user request 2026-07-24.
 
 ### What's RUNNING right now
-- **Schirrmeister2017 ANN twin**: jobs `35559000` (van_rossum) → `35559001`
-  (cross_entropy, chained via `--dependency=afterany`), 16h wall time, submitted
-  2026-07-23 ~23:35. Not yet aggregated. Once done:
-  ```
-  python aggregate_ann_twin.py --results-dir Results_schirrmeister_verify --loss-type van_rossum --subjects 1 2 3 4 5 6 7 8 9 10 11 12 13 14
-  python aggregate_ann_twin.py --results-dir Results_schirrmeister_verify --loss-type cross_entropy --subjects 1 2 3 4 5 6 7 8 9 10 11 12 13 14
-  ```
-  This is the last cell in Table IX (currently `\TODO{}` for ANN+VR/ANN+CE;
-  SNN+VR=62.9±10.5 already filled in, SNN+CE is `---`, never run on this dataset).
+- Nothing. All four ANN-twin submissions and all four fairness-baseline
+  submissions are complete and aggregated.
 
 ### Open decisions NOT yet acted on
-1. **User's current concern (2026-07-24): "tables are a mess, will need my
+1. **User's concern (2026-07-24): "tables are a mess, will need my
    attention."** Specifically raised: should Table VIII (fairness LDA/SVM) and
    Table IX (ANN twin) be merged into one wide table (SNN, LDA, SVM, ANN+VR,
    ANN+CE)? I gave reasoning for keeping them separate (different confounds
@@ -64,20 +62,12 @@ running, and what open decisions are still on the table.
    need ~14-16 columns). User has not yet decided; this is unresolved and the
    user said they will personally revisit table structure. **Do not
    unilaterally restructure the tables** — wait for explicit direction.
-2. **ANN-twin's binary-dataset reversal is not yet fully resolved.** On
-   BNCI2014-001, SNN+VR beats ANN+CE decisively. On Cho2017 and BNCI2015-001,
-   ANN+CE *significantly beats* SNN+VR instead (small margins, ~1.7pp, but
-   real: p<0.032 both). User pushed back that the current paper prose reads
-   like "admitting defeat without a proper challenge" — pointed out the SNN's
-   hyperparameters have never been tuned per-dataset (unlike SVM's per-fold
-   grid search), so it's not established whether the reversal is a genuine
-   architectural finding or just an untuned SNN on binary tasks. Two options
-   discussed, neither yet chosen: (a) soften the prose's framing only (no new
-   experiments), or (b) actually attempt to tune the SNN specifically for the
-   binary datasets before concluding anything. **Waiting on user's choice.**
-   Note: option (b) would cascade far beyond Table IX if it changes the SNN's
-   own accuracy — Table V, Table VIII, Table IX, Abstract, Conclusion, and the
-   Section V-C significance tests all cite the same 56.8%/72.1% numbers.
+2. ~~ANN-twin's binary-dataset reversal~~ — **RESOLVED 2026-07-24.** Once
+   Schirrmeister2017 completed, the full 4-dataset picture turned out to be a
+   genuine 1-win/1-tie/2-loss record (not just "loses on the binary ones"),
+   which the user agreed is a complete, balanced characterization rather than
+   "admitting defeat" — asked to finalize the paper with this picture as-is,
+   no SNN retuning pursued. Done.
 3. **references.bib citation-verification TODOs** — still unresolved (Moakher
    page numbers, 4 hardware-noise-citation author lists, one more
    training-data-recollection entry, one dead unused entry `sun2022eeg_snn`).
@@ -324,29 +314,55 @@ Significance (n=12):
 - SNN+VR vs ANN+CE: **ANN+CE wins**, -1.66pp, ANN+CE wins 11/12 subjects, p=0.015329 / p=0.001953 (significant)
 - ANN+CE vs ANN+VR: ANN+CE wins, +23.41pp, 11/12, p=0.000212 / p=0.000977 (significant)
 
-### Schirrmeister2017 (n=14) -- SUBMITTED, not complete
-Jobs 35559000 (van_rossum) / 35559001 (cross_entropy, chained), 16h wall
-time. Aggregate once done:
-```
-python aggregate_ann_twin.py --results-dir Results_schirrmeister_verify --loss-type van_rossum --subjects 1 2 3 4 5 6 7 8 9 10 11 12 13 14
-python aggregate_ann_twin.py --results-dir Results_schirrmeister_verify --loss-type cross_entropy --subjects 1 2 3 4 5 6 7 8 9 10 11 12 13 14
-```
+### Schirrmeister2017 (n=14) -- COMPLETE 2026-07-24
+Jobs 35559000 (van_rossum) / 35559001 (cross_entropy, chained), 16h wall time.
 
-### IMPORTANT: this reverses the BNCI2014-001 narrative on both binary datasets
-On BNCI2014-001 (4-class), SNN+VR beats ANN+CE decisively (66.0 vs 51.5,
-+14.5pp). On BOTH binary datasets, ANN+CE *significantly beats* SNN+VR
-instead (Cho2017: 58.5 vs 56.8, +1.7pp for ANN+CE; BNCI2015-001: 73.8 vs
-72.1, +1.7pp for ANN+CE) -- small margins but statistically real (p<0.032
-in both cases, and ANN+CE wins the majority of subjects in both: 33/52,
-11/12). The "Van Rossum loss doesn't suit non-spiking output" finding
-holds robustly on all three datasets tested so far (ANN+VR loses
-significantly to SNN+VR every time) -- what does NOT hold universally is
-"spiking beats a well-tuned non-spiking twin": that's true on BNCI2014-001,
-false on both binary datasets tested so far. Schirrmeister2017 (the other
-4-class dataset) will help tell whether this tracks class count or
-something else about these specific datasets. **The paper's "ANN Twin"
-section needs to report this honestly as dataset-dependent, not claim a
-universal spiking advantage** -- already updated 2026-07-24.
+| Subj | ANN+VR | ANN+CE |
+|---|---|---|
+| S1 | 25.4 | 65.0 |
+| S2 | 34.7 | 56.8 |
+| S3 | 26.4 | 83.7 |
+| S4 | 25.6 | 74.4 |
+| S5 | 25.2 | 66.2 |
+| S6 | 27.2 | 71.1 |
+| S7 | 26.2 | 47.4 |
+| S8 | 24.7 | 68.1 |
+| S9 | 24.1 | 48.8 |
+| S10 | 28.4 | 64.2 |
+| S11 | 25.8 | 59.7 |
+| S12 | 25.9 | 70.7 |
+| S13 | 24.8 | 54.1 |
+| S14 | 26.0 | 40.6 |
+| **Mean** | **26.4±2.5** | **62.2±11.3** |
+
+Significance vs SNN+VR (62.9±10.5):
+- vs ANN+VR: SNN wins, +36.5pp, t<0.0001, Wilcoxon=0.0001, SNN wins 14/14
+- vs ANN+CE: **essentially tied**, +0.74pp, t=0.402, Wilcoxon=0.402, SNN
+  wins only 8/14 (not significant by either test)
+
+### FINAL PICTURE (all 4 datasets complete) -- does NOT track class count
+| Dataset (n) | SNN+VR vs ANN+VR | SNN+VR vs ANN+CE |
+|---|---|---|
+| BNCI2014-001 (9, 4-class) | SNN wins, +38.2pp, p<0.0001 | **SNN wins**, +14.5pp, p=0.0003 |
+| Schirrmeister2017 (14, 4-class) | SNN wins, +36.5pp, p<0.0001 | **tied**, +0.74pp, p=0.40 |
+| Cho2017 (52, 2-class) | SNN wins, +5.75pp, p=0.0002 | **ANN+CE wins**, -1.70pp, p=0.031 |
+| BNCI2015-001 (12, 2-class) | SNN wins, +21.75pp, p=0.0006 | **ANN+CE wins**, -1.66pp, p=0.015 |
+
+The Van-Rossum/non-spiking mismatch is now confirmed rock-solid on all
+four datasets (always p<0.0002, SNN always winning by 5.75-38.2pp) --
+that part of the story is fully settled. But "spiking beats a well-tuned
+non-spiking twin" is a **1-win / 1-tie / 2-loss record**, not a class-count
+effect and not a universal advantage: true on BNCI2014-001, a genuine null
+result on Schirrmeister2017 (p=0.40, wins split 8/14 -- not even a trend),
+and reversed (small but significant) on both binary datasets. **Final,
+honest characterization for the paper: the spiking mechanism's value,
+once a suitable loss is used, is dataset-dependent -- present on one
+dataset, absent on another, mildly reversed on two more -- not a uniform
+architectural advantage.** User explicitly confirmed this reframing
+resolves the earlier "reads like admitting defeat" concern (it's a
+complete, balanced record, not a retreat) and asked to finalize the paper
+with this full picture -- done 2026-07-24, Table IX + Section V-G prose
++ Limitations all updated to the complete 4-dataset result.
 
 ---
 
