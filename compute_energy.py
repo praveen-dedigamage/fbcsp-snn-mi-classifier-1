@@ -51,25 +51,31 @@ References
 [2] Orchard et al., "Efficient neuromorphic signal processing with Loihi 2,"
     IEEE SiPS, 2021.  Loihi 2 SynOp energy ~8-10 pJ (chip-level estimate).
 
-[3] Qian et al., "A Sub-1V 50nW 6th-Order Butterworth Gm-C Filter for
-    EEG Applications," IEEE ISCAS, 2017.
-    50 nW per complete 6th-order Gm-C filter (modern sub-threshold design).
-    Used as the primary (optimistic) Gm-C figure.
+[3] Gallegos-Ramirez et al., "A 128.7 nW Gm-C bandpass filter for EEG,"
+    IEEE MWSCAS, 2014.  DOI 10.1109/MWSCAS.2014.6908555 (verified).
+    128.7 nW per sub-microwatt Gm-C EEG bandpass filter -- the single
+    Gm-C figure used here.
 
-[4] Verhoeven et al., "Design of Gm-C Filters with Very Low Supply
-    Voltages," IEEE Trans. Circuits Syst. I, 2007.
-    ~2 uW per biquad section (older technology, 0.35 um CMOS).
-    Used as the conservative Gm-C figure.
+    NOTE: earlier versions of this script used "Qian et al., ISCAS 2017,
+    50 nW" and "Verhoeven et al., TCAS-I 2007, 2 uW" as the Gm-C figures.
+    NEITHER could be verified against a real publication -- both were
+    fabricated and have been REMOVED. Do not reintroduce them.
 
-[5] Sharifshazileh et al., "An Electronic Neuromorphic System for
-    Real-Time Detection of High-Frequency Oscillations in iEEG,"
-    Nature Commun., 2021.
-    ADM front-end power: 109 uW for 18-channel iEEG ASIC.
-    Scaled linearly to our 22-channel system: ~134 uW.
+[5] Sharifshazileh et al., "An electronic neuromorphic system for real-time
+    detection of high frequency oscillations (HFO) in intracranial EEG,"
+    Nature Commun., 2021.  DOI 10.1038/s41467-021-23342-2 (verified).
+    Front-end signal-to-spike power: 6.2 uW/CHANNEL (whole chip 614.3 uW).
+    Scaled to 22 channels: ~136 uW.  Used ONLY as the conservative
+    (full analog signal-to-spike ASIC) end of the encoder term.
+    NOTE: earlier versions mis-stated this as "109 uW ADM for 18 ch"; the
+    real figure is 6.2 uW/ch -- corrected.
 
-[6] Burr et al., "Neuromorphic computing and engineering in nano-scale
-    crossbar hardware," MRS Bulletin, 2017.
-    ReRAM cell read energy: ~15 fJ per cell access.
+[6] Burr et al., "Neuromorphic computing using non-volatile memory,"
+    Advances in Physics: X, 2017.  DOI 10.1080/23746149.2016.1259585
+    (verified) -- a REVIEW of NVM crossbars for analog matrix-vector
+    multiply. It does not headline one per-cell energy; the ~15 fJ/MAC used
+    here is a REPRESENTATIVE in-memory-compute figure (order fJ/MAC), not a
+    specific Burr number.
 
 Energy model — SNN only
 -----------------------
@@ -87,27 +93,34 @@ Cross-check model (item 1b) — this codebase's own instrumentation
   uniform rate. Output-layer spikes are excluded: they terminate at the
   population-vote readout and drive no further weight matrix.
 
-Energy model — full analog pipeline (4-second MI trial at 250 Hz)
+Energy model — whole analog pipeline (4-second MI trial at 250 Hz)
 ------------------------------------------------------------------
+Reported as a BOUNDED RANGE, not a single number: the stages come from
+independent silicon precedents (not one validated system) and the encoder
+term alone spans an order of magnitude. This matches the paper's energy
+section.
+
   Stage 1  Gm-C filter bank
-           Config: 6 bands x 22 channels x 2 biquad sections = 264 Gm-C cells
-           Modern  [3]: 50 nW / complete 6th-order filter x 132 filters = 6.6 uW
-                        -> 6.6 uW x 4 s = 26 uJ
-           Conservative [4]: 2 uW / biquad x 264 cells = 528 uW
-                        -> 528 uW x 4 s = 2,112 uJ
+           6 bands x 22 channels = 132 sub-microwatt bandpass filters
+           [3]: 128.7 nW/filter x 132 = 17.0 uW  ->  x 4 s = 68 uJ
 
-  Stage 2  ADM encoder
-           Config: 22 EEG channels, each with one ADM comparator
-           [5]: 134 uW (scaled from 109 uW / 18 ch x 22 ch)
-                        -> 134 uW x 4 s = 536 uJ
+  Stage 2  CSP spatial projection (in-memory NVM crossbar)
+           ~6.34 M multiply-accumulates/trial (6 bands x 22 in x 48 out
+           x 1001 samples). NEGLIGIBLE: ~0.1 uJ at 15 fJ/MAC [6], and still
+           only ~6 uJ even at a pessimistic 1 pJ/MAC.
 
-  Stage 3  CSP spatial filter (ReRAM crossbar)
-           Config: 1001 samples x (22 inputs -> 144 outputs) = 3.17 M cell reads
-           [6]: 15 fJ/cell x 3.17 M = 47.6 uJ
+  Stage 3  MIBIF comparator bank  (negligible, <1 uJ)
 
-  Stage 4  MIBIF comparator bank  (negligible, <1 uJ)
+  Stage 4  Delta spike encoder -- DOMINANT and most implementation-dependent:
+           lean digital comparator bank  ->  ~1 uJ
+           full analog signal-to-spike ASIC [5]: 6.2 uW/ch x 22 x 4 s -> ~0.55 mJ
 
-  Stage 5  SNN on Loihi 2  (directly measured via Lava)
+  Stage 5  SNN classifier on Loihi 2 (SynOp count x pJ/SynOp)  ->  13.9 uJ
+
+  Whole pipeline: ~0.08 mJ (lean encoder) to ~0.63 mJ (analog encoder)/trial,
+  dominated by the Gm-C filter bank and (at the high end) the encoder; CSP
+  crossbar and MIBIF are negligible. Still ~95-720x below a CPU (60 mJ) and
+  ~400-3000x below a GPU (250 mJ) implementation of the same pipeline.
 
 GPU baseline (V100, inference only)
 ------------------------------------
@@ -119,10 +132,6 @@ Edge-CPU baseline (ARM Cortex-A72, ~3 W)
 -----------------------------------------
   FBCSP + SNN on CPU: digital filter + CSP + encode + SNN ~20 ms.
   E_CPU = 3 W x 20e-3 s = 60 mJ.
-
-EEGNet-on-M4 baseline (Burrello et al. 2020, classifier only)
---------------------------------------------------------------
-  Measured: 4.28 mJ on ARM Cortex-M4F (does not include digital filter + CSP).
 """
 
 from __future__ import annotations
@@ -158,43 +167,41 @@ E_GPU_30PCT_J     = 250.0 * 0.30 * 1e-3   # 30% utilisation (more realistic)
 # Edge CPU (ARM Cortex-A72, ~3 W, ~20 ms for T=1001 sequential LIF)
 E_CPU_J           = 3.0 * 20e-3
 
-# EEGNet-on-Cortex-M4 classifier-only [Burrello 2020]
-E_EEGNET_M4_J     = 4.28e-3
-
 # ---------------------------------------------------------------------------
 # Analog front-end energy constants (4-second MI trial)
-# All figures extrapolated from cited silicon — NOT measured in this work.
-# Describes a *separate*, speculative hardware story (a hypothetical
-# all-analog front-end) -- Loihi 2 itself is digital, see module docstring.
+# Per-stage figures from DOI-verified published silicon — NOT measured here.
+# A hypothetical all-analog front-end that COULD be paired with a digital
+# Loihi backend; Loihi 2 itself is digital (see module docstring). The Qian
+# and Verhoeven Gm-C figures used in earlier versions could not be verified
+# and have been removed; the Gm-C term now uses Gallegos 2014 (DOI-verified).
 # ---------------------------------------------------------------------------
 
-TRIAL_DURATION_S  = 4.0   # seconds (T=1001 at 250 Hz ≈ 4 s)
-
-# Gm-C filter bank
-# Config: 6 bands × 22 channels × 2 biquad sections = 264 Gm-C cells
-N_GMC_CELLS        = 6 * 22 * 2   # = 264
-
-# Modern [Qian 2017]: 50 nW per complete 6th-order filter (= 2 biquad cells)
-# → 50 nW / 2 cells = 25 nW/cell
-E_GMC_MODERN_J     = (25e-9 * N_GMC_CELLS) * TRIAL_DURATION_S   # power × time
-
-# Conservative [Verhoeven 2007]: 2 µW per biquad cell
-E_GMC_CONSERV_J    = (2e-6  * N_GMC_CELLS) * TRIAL_DURATION_S
-
-# ADM encoder [Sharifshazileh 2021, 109 µW / 18 ch, scaled to 22 ch]
+TRIAL_DURATION_S   = 4.0   # seconds (T=1001 at 250 Hz ≈ 4 s)
 N_EEG_CHANNELS     = 22
-ADM_POWER_W        = 109e-6 * (N_EEG_CHANNELS / 18)
-E_ADM_J            = ADM_POWER_W * TRIAL_DURATION_S
 
-# ReRAM CSP crossbar [Burr 2017, ~15 fJ/cell read]
-# Config: 1001 samples × 22 inputs × 144 outputs = 3.17 M cell reads
+# Gm-C filter bank: one sub-microwatt Gm-C EEG bandpass filter per
+# (band, channel) → 6 bands × 22 channels = 132 filters.
+N_GMC_FILTERS      = 6 * 22                                    # = 132
+E_GMC_J            = 128.7e-9 * N_GMC_FILTERS * TRIAL_DURATION_S   # [3]  ≈68 µJ
+
+# CSP spatial projection on an in-memory NVM crossbar [6].
+# ~6.34 M multiply-accumulates/trial: 6 bands × 22 in × (6 pairs × 2m=8) out
+# × 1001 samples. Per-MAC energy is a REPRESENTATIVE order-fJ figure, not a
+# specific Burr number (Burr 2017 is a review).
 N_SAMPLES          = 1001
-N_CSP_IN           = 22
-N_CSP_OUT          = 144   # 6 bands × 4 filters/band × 6 class pairs
-E_RERAM_J          = N_SAMPLES * N_CSP_IN * N_CSP_OUT * 15e-15
+N_CSP_MACS         = N_SAMPLES * 6 * N_EEG_CHANNELS * (6 * 8)  # ≈6.34 M
+E_CROSSBAR_PER_MAC = 15e-15                                    # representative fJ/MAC
+E_CSP_J            = N_CSP_MACS * E_CROSSBAR_PER_MAC           # ≈0.1 µJ (negligible)
 
 # MIBIF comparator bank — negligible
-E_MIBIF_J          = 0.5e-6   # <1 µJ
+E_MIBIF_J          = 0.5e-6                                    # <1 µJ
+
+# Delta spike encoder — DOMINANT and most implementation-dependent term.
+#   (a) lean digital comparator bank over 288 features × 1001 samples
+E_ENCODER_DIGITAL_J = 1e-6                                     # ~1 µJ
+#   (b) full analog signal-to-spike front end, Sharifshazileh 2021 [5]:
+#       6.2 µW/channel (verified; whole chip 614.3 µW), scaled to 22 ch.
+E_ENCODER_ANALOG_J  = 6.2e-6 * N_EEG_CHANNELS * TRIAL_DURATION_S   # ≈0.55 mJ
 
 
 # ---------------------------------------------------------------------------
@@ -342,81 +349,59 @@ def compute_energy_table(records: List[Dict]) -> List[Dict]:
 # ---------------------------------------------------------------------------
 
 def _print_frontend_breakdown(mean_snn_l2_uj: float, mean_snn_l1_uj: float) -> None:
-    """Print full analog-neuromorphic pipeline energy breakdown."""
+    """Print the whole-pipeline energy budget as a BOUNDED RANGE.
 
-    e_gmc_mod_uj  = E_GMC_MODERN_J  * 1e6
-    e_gmc_con_uj  = E_GMC_CONSERV_J * 1e6
-    e_adm_uj      = E_ADM_J         * 1e6
-    e_reram_uj    = E_RERAM_J       * 1e6
-    e_mibif_uj    = E_MIBIF_J       * 1e6
+    The range is set by the encoder: a lean digital comparator bank
+    (~1 uJ) vs. a full analog signal-to-spike ASIC (~0.55 mJ). Per-stage
+    figures are DOI-verified precedents from INDEPENDENT designs, not one
+    validated system -- hence a range, not a single number. Matches the
+    paper's energy section.
+    """
+    e_gmc_uj      = E_GMC_J             * 1e6
+    e_csp_uj      = E_CSP_J             * 1e6
+    e_mibif_uj    = E_MIBIF_J           * 1e6
+    e_enc_lean_uj = E_ENCODER_DIGITAL_J * 1e6
+    e_enc_con_uj  = E_ENCODER_ANALOG_J  * 1e6
 
-    total_mod_uj  = e_gmc_mod_uj  + e_adm_uj + e_reram_uj + e_mibif_uj + mean_snn_l2_uj
-    total_con_uj  = e_gmc_con_uj  + e_adm_uj + e_reram_uj + e_mibif_uj + mean_snn_l2_uj
+    fixed_uj      = e_gmc_uj + e_csp_uj + e_mibif_uj + mean_snn_l2_uj
+    total_lean_uj = fixed_uj + e_enc_lean_uj
+    total_con_uj  = fixed_uj + e_enc_con_uj
 
-    e_eegnet_m4_uj = E_EEGNET_M4_J * 1e6
-    e_cpu_uj       = E_CPU_J        * 1e6
+    e_cpu_uj      = E_CPU_J          * 1e6
+    e_gpu_full_uj = E_GPU_FULL_TDP_J * 1e6
 
-    print(f"\n{'='*72}")
-    print(f"  Full Pipeline Energy (4-second MI trial)")
-    print(f"  NOTE: Only the Loihi 2 SNN stage is directly measured (digital")
-    print(f"  chip, via Lava). The front-end stages below describe a SEPARATE,")
-    print(f"  speculative all-analog front-end extrapolated from cited")
-    print(f"  silicon precedents -- Loihi 2 itself is not analog.")
-    print(f"{'='*72}")
-    print(f"  {'Stage':<35}  {'Modern':>9}  {'Conserv.':>10}  Reference")
-    print(f"  {'':35}  {'(µJ)':>9}  {'(µJ)':>10}")
-    print(f"  {'-'*68}")
-
+    print(f"\n{'='*78}")
+    print(f"  Whole-Pipeline Energy (4-second MI trial) -- BOUNDED RANGE")
+    print(f"  The SNN stage is a spike-count estimate for a real digital chip")
+    print(f"  (Loihi 2). The analog front-end stages are DOI-verified per-stage")
+    print(f"  precedents from INDEPENDENT designs, not one validated system --")
+    print(f"  reported as a range, not a single figure.")
+    print(f"{'='*78}")
+    print(f"  {'Stage':<36}  {'Energy (uJ)':>15}  Reference")
+    print(f"  {'-'*74}")
     stages = [
-        ("Gm-C filter bank (6 bands × 22 ch)",
-         e_gmc_mod_uj,  e_gmc_con_uj,
-         "Qian 2017 / Verhoeven 2007"),
-        ("ADM encoder (22 channels)",
-         e_adm_uj,      e_adm_uj,
-         "Sharifshazileh 2021"),
-        ("ReRAM CSP crossbar (22→144, 1001 samp.)",
-         e_reram_uj,    e_reram_uj,
-         "Burr 2017"),
-        ("MIBIF comparator bank",
-         e_mibif_uj,    e_mibif_uj,
-         "negligible"),
-        ("SNN on Loihi 2 (digital)  ← measured",
-         mean_snn_l2_uj, mean_snn_l2_uj,
-         "This work"),
+        ("Gm-C filter bank (132 filters)",  f"{e_gmc_uj:7.1f}",                       "Gallegos 2014 [3]"),
+        ("CSP crossbar (~6.3M MAC)",        f"{e_csp_uj:7.1f}",                       "Burr 2017 [6] (repr.)"),
+        ("MIBIF comparator bank",           f"{e_mibif_uj:7.1f}",                     "negligible"),
+        ("Spike encoder (lean .. analog)",  f"{e_enc_lean_uj:.0f} .. {e_enc_con_uj:.0f}", "digital .. Sharif 2021 [5]"),
+        ("SNN classifier (Loihi 2)",        f"{mean_snn_l2_uj:7.1f}",                 "This work"),
     ]
-    for name, mod, con, ref in stages:
-        eq = "  " if abs(mod - con) < 0.01 else ""
-        print(f"  {name:<35}  {mod:>9.1f}  {con:>10.1f}  {eq}{ref}")
+    for name, e, ref in stages:
+        print(f"  {name:<36}  {e:>15}  {ref}")
+    print(f"  {'-'*74}")
+    print(f"  {'WHOLE PIPELINE':<36}  {total_lean_uj:6.0f} .. {total_con_uj:<6.0f} uJ"
+          f"  (~{total_lean_uj/1000:.2f}-{total_con_uj/1000:.2f} mJ)")
+    print(f"{'='*78}")
 
-    print(f"  {'-'*68}")
-    print(f"  {'TOTAL':<35}  {total_mod_uj:>9.1f}  {total_con_uj:>10.1f}")
-    print(f"{'='*72}")
-
-    print(f"\n  Full pipeline vs competing classifiers")
-    print(f"  {'-'*62}")
-    print(f"  {'System':<45}  {'Energy':>9}  Note")
-    print(f"  {'-'*62}")
-    comparisons = [
-        ("Ours — full pipeline (modern Gm-C)",
-         total_mod_uj,
-         "all stages"),
-        ("Ours — full pipeline (conservative Gm-C)",
-         total_con_uj,
-         "all stages"),
-        ("EEGNet on Cortex-M4 [Burrello 2020]",
-         e_eegnet_m4_uj,
-         "classifier only (no filter/CSP)"),
-        ("FBCSP+SNN on edge CPU (estimated)",
-         e_cpu_uj,
-         "full pipeline, 20ms @ 3W"),
-    ]
-    for name, e_uj, note in comparisons:
-        print(f"  {name:<45}  {e_uj:>9.1f}  {note}")
-
-    print(f"\n  Honest note: EEGNet-on-M4 figure is classifier-only.")
-    print(f"  Adding their digital filter + CSP preprocessing would add")
-    print(f"  ~10–40 mJ, making our full pipeline {(e_cpu_uj/total_mod_uj):.0f}× more efficient")
-    print(f"  on a like-for-like basis.\n")
+    print(f"\n  vs a digital implementation of the SAME pipeline:")
+    print(f"    Edge CPU (ARM A72, 3 W, 20 ms):  {e_cpu_uj/1000:.0f} mJ"
+          f"   ->  {e_cpu_uj/total_con_uj:.0f}-{e_cpu_uj/total_lean_uj:.0f}x more efficient")
+    print(f"    GPU V100 (full TDP, 1 ms):       {e_gpu_full_uj/1000:.0f} mJ"
+          f"   ->  {e_gpu_full_uj/total_con_uj:.0f}-{e_gpu_full_uj/total_lean_uj:.0f}x more efficient")
+    print(f"\n  Front-end-dominated: the SNN classifier ({mean_snn_l2_uj:.1f} uJ) is a small")
+    print(f"  slice; the always-on analog front end sets the budget. The headline")
+    print(f"  classifier-only margin ({e_cpu_uj/mean_snn_l2_uj:,.0f}x vs CPU) narrows to")
+    print(f"  ~1e2x once the front end is counted.\n")
 
 
 def _print_table(rows: List[Dict]) -> None:
