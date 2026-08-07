@@ -39,7 +39,7 @@ import numpy as np
 import torch
 from sklearn.model_selection import StratifiedKFold, StratifiedShuffleSplit
 
-from fbcsp_snn import DEVICE, setup_logger
+from fbcsp_snn import DEVICE, set_global_seed, setup_logger
 from fbcsp_snn.band_selection import select_bands
 from fbcsp_snn.baseline import extract_logvar, run_baseline_classifiers
 from fbcsp_snn.config import Config
@@ -374,6 +374,7 @@ def _run_single_fold(
     params = {
         "subject_id":         cfg.subject_id,
         "fold":               fold_idx,
+        "seed":               cfg.seed,
         "dataset":            cfg.moabb_dataset,
         "n_classes":          n_classes,
         "n_input_features":   n_input,
@@ -433,6 +434,7 @@ def run_train(cfg: Config) -> None:
     cfg : Config
         Pipeline configuration.
     """
+    set_global_seed(cfg.seed)
     t_start = time.perf_counter()
 
     # Auto-detect n_classes

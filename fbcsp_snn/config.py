@@ -88,6 +88,7 @@ class Config:
     fold: Optional[int] = None
     n_folds: int = 10
     val_fraction: float = 0.2
+    seed: int = 42
 
     # Band selection
     adaptive_bands: bool = True
@@ -180,6 +181,8 @@ def build_parser() -> argparse.ArgumentParser:
     shared.add_argument("--data-path", default=None)
     shared.add_argument("--results-dir", default="Results")
     shared.add_argument("--n-classes", type=int, default=None)
+    shared.add_argument("--seed", type=int, default=42,
+                        help="Global RNG seed for reproducible runs.")
 
     # ---- train ----
     train_p = sub.add_parser("train", parents=[shared], help="Train the pipeline.")
@@ -309,7 +312,7 @@ def config_from_args(args: argparse.Namespace) -> Config:
         "lr", "weight_decay", "epochs", "early_stopping_patience",
         "early_stopping_warmup", "spiking_prob",
         "feature_selection_method", "feature_percentile", "mi_fraction",
-        "csp_bits",
+        "csp_bits", "seed",
     ]
     for f in optional_fields:
         if hasattr(args, f):
