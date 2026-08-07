@@ -190,6 +190,165 @@ def quantize_csp_filters(
 
 
 # ---------------------------------------------------------------------------
+# Euclidean-Alignment whitener quantisation
+# ---------------------------------------------------------------------------
+
+def quantize_ea_whiteners(
+    whiteners: Dict,
+    bits: int = 8,
+) -> Dict:
+    """Quantise the per-band Euclidean-Alignment whiteners ``R^{-1/2}``.
+
+    One dense ``(n_channels, n_channels)`` matrix is stored per frequency band
+    and applied to every trial at inference, so these are inference-time
+    parameters exactly like the CSP filters.  They are quantised here with a
+    **separate scale per band**: each whitener has its own spectrum, and a
+    shared scale would waste range on the band with the smallest entries.
+
+    These matrices are built from ``eigenvalue ** -0.5``, so their dynamic
+    range is wide and the inverse square root amplifies small eigenvalues.
+    Expect this stage to be among the first to degrade at low bit-widths.
+
+    Parameters
+    ----------
+    whiteners : Dict
+        Mapping ``band_idx -> np.ndarray`` of shape
+        ``(n_channels, n_channels)``, as stored in
+        :attr:`PairwiseCSP.ea_whiteners_`.
+    bits : int
+        Quantisation bit-width.
+
+    Returns
+    -------
+    Dict
+        New dict with quantised (dequantised) whitener matrices.
+    """
+    quantised: Dict = {}
+    scales: list[float] = []
+
+    for band_idx, R in whiteners.items():
+        Rq, scale = quantize_array_symmetric(R, bits)
+        quantised[band_idx] = Rq
+        scales.append(scale)
+
+    logger.info(
+        "INT%d EA: quantised %d whitener matrices  (mean scale %.6g)",
+        bits, len(whiteners), float(np.mean(scales)) if scales else 0.0,
+    )
+    return quantised
+
+
+# ---------------------------------------------------------------------------
+# z-normalisation statistic quantisation
+# ---------------------------------------------------------------------------
+
+def quantize_znorm(
+    znorm,
+    bits: int = 8,
+    eps: float = 1e-8,
+):
+    """Return a copy of *znorm* with quantised ``mean_`` and ``std_``.
+
+    Both vectors are fitted on the training fold and applied unchanged at
+    inference, so they are stored parameters and belong in a whole-pipeline
+    quantisation sweep.
+
+    ``mean_`` and ``std_`` are quantised with independent scales.  After
+    quantisation ``std_`` is clamped to *eps*: at low bit-widths a small
+    standard deviation can round to zero, which would otherwise divide by
+    zero in :meth:`ZNormaliser.transform`.
+
+    Note
+    ----
+    A symmetric quantiser is used for consistency with the other stages even
+    though ``std_`` is strictly positive, which costs one sign bit of range.
+    An unsigned quantiser would be marginally more efficient in real hardware.
+
+    Parameters
+    ----------
+    znorm : ZNormaliser
+        Fitted normaliser.  Not modified.
+    bits : int
+        Quantisation bit-width.
+    eps : float
+        Floor applied to the quantised standard deviations.
+
+    Returns
+    -------
+    ZNormaliser
+        Deep-copied normaliser with quantised statistics.
+    """
+    znorm_q = copy.deepcopy(znorm)
+
+    mean_q, mean_scale = quantize_array_symmetric(znorm_q.mean_, bits)
+    std_q, std_scale = quantize_array_symmetric(znorm_q.std_, bits)
+
+    n_collapsed = int(np.sum(std_q < eps))
+    std_q = np.maximum(std_q, eps)
+
+    znorm_q.mean_ = mean_q
+    znorm_q.std_ = std_q
+
+    logger.info(
+        "INT%d z-norm: quantised mean (scale %.6g) and std (scale %.6g)"
+        "%s",
+        bits, mean_scale, std_scale,
+        f"  [{n_collapsed} std values floored to {eps:g}]" if n_collapsed else "",
+    )
+    return znorm_q
+
+
+# ---------------------------------------------------------------------------
+# Full-model quantisation (weights *and* biases)
+# ---------------------------------------------------------------------------
+
+def quantize_model_full(
+    model: SNNClassifier,
+    bits: int = 8,
+) -> SNNClassifier:
+    """Quantise every ``Linear`` weight **and bias** in *model*.
+
+    :func:`quantize_model` deliberately leaves biases at full precision, which
+    is standard practice for INT8 inference.  For a whole-pipeline bit-width
+    sweep that exemption is not defensible: a pipeline described as "4-bit"
+    must not retain FP32 parameters anywhere.  Weights and biases are given
+    independent per-tensor scales, as their dynamic ranges differ.
+
+    Parameters
+    ----------
+    model : SNNClassifier
+        Source model.  Not modified.
+    bits : int
+        Quantisation bit-width.
+
+    Returns
+    -------
+    SNNClassifier
+        Deep copy with all linear weights and biases quantised.
+    """
+    model_q = copy.deepcopy(model)
+    model_q.eval()
+
+    n_w = n_b = 0
+    with torch.no_grad():
+        for _, module in model_q.named_modules():
+            if isinstance(module, nn.Linear):
+                dq, _ = quantize_tensor_symmetric(module.weight.data, bits)
+                module.weight.data.copy_(dq)
+                n_w += 1
+                if module.bias is not None:
+                    dqb, _ = quantize_tensor_symmetric(module.bias.data, bits)
+                    module.bias.data.copy_(dqb)
+                    n_b += 1
+
+    logger.info(
+        "INT%d model: quantised %d weight tensors and %d bias tensors",
+        bits, n_w, n_b,
+    )
+    return model_q
+
+
+# ---------------------------------------------------------------------------
 # Accuracy-loss summary
 # ---------------------------------------------------------------------------
 
