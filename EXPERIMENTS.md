@@ -93,11 +93,22 @@ n_output`), measured during training.
 Lava is confirmed unavailable on Roihu (checked 9 Aug 2026): no `lava`
 module, and the `.venv_lava` referenced in `fbcsp_snn/lava_model.py` is a
 Puhti x86 environment that does not exist there -- and could not be imported
-on aarch64 GPU nodes if it did. Not worth installing before the deadline:
-`lava-dl` wheel availability on ARM is uncertain, and it would only provide
-a second measurement of a spike count we already record. Consequence for the
-paper: the binary energy figure rests on one measurement, where the 4-class
-figure had two agreeing ones. State that in the methods.
+on aarch64 GPU nodes if it did.
+
+This costs less than it sounds. `run_lava_infer.py` computes SynOps as
+`input_spikes * n_hidden + hidden_spikes * n_output`, which is the **same
+formula** `load_pytorch_side_synops` uses, with the same energy constants.
+Lava never measured SynOps independently; it counted spikes in a
+`lava.lib.dl.slayer` port and applied identical arithmetic. The artifacts
+path is if anything the more faithful spike source, since it comes from the
+model whose accuracy the paper actually reports.
+
+What is genuinely lost is the **port validation**: `lava_mean` recorded
+accuracy after rebuilding the network in a Loihi-targeted toolchain, which
+answers "can this be expressed for Loihi and still classify correctly" --
+a different question from energy. The binary paper will not have that.
+State it in the methods; do not describe the energy figure as
+cross-validated.
 
 `--n-channels` matters: the front-end stages scale with recording geometry,
 and the defaults describe BNCI2014-001 (22 ch). Everything else -- samples,
