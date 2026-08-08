@@ -16,7 +16,7 @@ Working dir on Roihu: `/scratch/project_2003397/praveen/fbcsp`
 |---|---|---|---|---|
 | 1 | BNCI2015-001 training, 12 subj x 5 folds | **DONE** | ~1,800 BU | — |
 | 2 | Uniform (whole-pipeline) quantisation sweep, B15 | **DONE** | in job 525714 | — |
-| 3 | Per-group quantisation sweep, B15 | **RUNNING** (525714) | — | 4, 7 |
+| 3 | Per-group quantisation sweep, B15 | **DONE** | in job 525714 | — |
 | 4 | Collect evidence bundle | TODO | free | needs 3 |
 | 5 | Binary energy estimate | TODO | free | — |
 | 6 | Cross-subject summary table | TODO | free | — |
@@ -60,6 +60,27 @@ Whole-pipeline quantisation (all five parameter groups at once):
 At 4 bits the SD collapses from 16.0 to 4.0: every subject converges on chance
 regardless of prior accuracy. Damage is proportional to available signal
 (S1 loses 48 points; S6, already at 56%, loses none).
+
+Per-group at 4 bits, all 12 subjects (delta vs fp32):
+
+| Group | Delta |
+|---|---|
+| **EA whiteners** | **-19.1** |
+| **SNN biases** | **-8.3** |
+| z-norm | -3.2 |
+| CSP filters | -3.2 |
+| SNN weights | -2.9 |
+
+Two findings. The biases are the second most fragile group, not negligible as
+first assumed -- they are few, so a per-tensor scale is coarse relative to
+their spread, and a bias error displaces membrane potential directly against
+a fixed threshold. And the losses **do not accumulate**: individually they sum
+to -36.7, but quantising all groups together costs only -20.8, close to EA's
+own -19.1. The collapse is dominated by one stage rather than distributed,
+which is why fusing EA away recovers most of it.
+
+All 7 integrity checks pass over 1920 sweep rows, including
+`all@32bit == fp32_reference` exactly.
 
 ---
 
