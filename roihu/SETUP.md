@@ -1,0 +1,183 @@
+# Running the BNCI2015-001 PTQ study on Roihu
+
+Roihu is CSC's 2026 system. It is **not** Puhti with a new name — the GPU
+nodes are NVIDIA GH200 Grace Hopper, whose CPU side is **ARM (aarch64)**.
+That single fact drives most of the setup below.
+
+---
+
+## 0. Before anything: check access
+
+Puhti access does **not** automatically grant Roihu access.
+
+```bash
+ssh <username>@roihu-gpu.csc.fi        # must succeed
+csc-projects                            # list projects and their services
+```
+
+You need a project with **Roihu GPU** enabled and GPU billing units left.
+If the login fails or no project lists Roihu, apply via MyCSC first —
+nothing below will work until it does.
+
+> **Use `roihu-gpu.csc.fi`, not `roihu-cpu.csc.fi`.**
+> CSC's docs are explicit: software built on GPU nodes only works on GPU
+> nodes, "and this also applies to Python environments". A environment built
+> on the CPU login node is x86 and will fail inside an ARM GPU job. Confirm
+> with `uname -m` -> expect `aarch64`.
+
+---
+
+## 1. Get the code onto Roihu
+
+The work lives on branch `claude/hungry-neumann`. Either push and clone:
+
+```bash
+# on your laptop
+git push origin claude/hungry-neumann
+
+# on roihu-gpu
+cd /scratch/<project>            # NOT $HOME: scratch is bigger and faster
+git clone <repo-url> fbcsp
+cd fbcsp && git checkout claude/hungry-neumann
+```
+
+or copy directly if you would rather not push:
+
+```bash
+# from the worktree on your laptop
+rsync -av --exclude '.git' --exclude 'Results*' --exclude '.venv*' \
+    ./ <username>@roihu-gpu.csc.fi:/scratch/<project>/fbcsp/
+```
+
+---
+
+## 2. Find the PyTorch module name
+
+Deliberately **not** hard-coded in the scripts — it must come from the system,
+not from a guess.
+
+```bash
+module spider pytorch
+```
+
+Note the exact name/version it reports, then export it for every later step:
+
+```bash
+export PYTORCH_MODULE=pytorch/<version-it-showed>
+```
+
+---
+
+## 3. Edit your project ID
+
+All three sbatch scripts carry a placeholder:
+
+```bash
+cd /scratch/<project>/fbcsp
+sed -i 's/project_XXXXXXX/project_2001234/' roihu/*.sh    # <- your real ID
+```
+
+---
+
+## 4. One-time setup (interactive, on the login node)
+
+```bash
+bash roihu/00_setup_roihu.sh
+```
+
+This will:
+- **abort** unless `uname -m` is `aarch64` (guards the x86/ARM trap)
+- load the PyTorch module and print torch / CUDA / device
+- `pip install --user snntorch moabb mne`
+- **pre-download all 12 subjects serially**
+
+That last step matters: without it, parallel tasks would all try to populate
+the same `~/mne_data` cache simultaneously and race each other.
+
+---
+
+## 5. Preflight (15 minutes, cheap)
+
+```bash
+sbatch roihu/preflight.sh
+```
+
+Checks arch, CUDA visibility inside a real job, every project import, and that
+the dataset is cached. It runs on the 15-minute `gputest` partition, so a wrong
+module name surfaces in minutes rather than as 60 simultaneous failures later.
+
+**Do not skip this.** Read the output and confirm it ends with
+`PREFLIGHT OK` before continuing.
+
+---
+
+## 6. Train, then sweep
+
+```bash
+TRAIN=$(sbatch --parsable roihu/01_train_array.sh)
+sbatch --dependency=afterok:${TRAIN} roihu/02_quant_sweep.sh
+```
+
+The dependency means the sweep starts only if training succeeds.
+
+**Layout:** 12 array tasks, one per subject, each running that subject's
+5 folds **concurrently on one GPU**. This is deliberate — the workload leaves
+the GPU ~80 % idle (measured: 3 concurrent trainings each slow by only 18 %
+while total throughput rises 2.5x), so packing folds converts ~11.5 h of
+serial work into ~3-4 h of wall clock and bills 12 GPU allocations instead
+of 60.
+
+Monitor:
+
+```bash
+squeue --me
+tail -f logs/s1_f0.log            # a specific fold
+seff <jobid>                       # efficiency after it finishes
+```
+
+---
+
+## 7. Results
+
+```
+Results_bnci2015/Subject_<N>/fold_<K>/     # per-fold artifacts
+Results_quant/quant_sweep_BNCI2015_001_uniform.csv
+Results_quant/quant_sweep_BNCI2015_001_per-group.csv
+```
+
+Pull them back:
+
+```bash
+rsync -av <username>@roihu-gpu.csc.fi:/scratch/<project>/fbcsp/Results_quant/ ./
+```
+
+---
+
+## What the two sweeps answer
+
+**uniform** — every parameter group quantised to the same width, so a row
+reported at N bits has no full-precision parameter anywhere: EA whiteners,
+CSP filters, z-norm statistics, SNN weights **and** SNN biases.
+`all@32bit` must equal `fp32_reference`; 32-bit quantisation is lossless
+(measured 1e-10 relative error), so if those two disagree the harness is
+broken, not the hardware story.
+
+**per-group** — one group quantised at a time. This tests the prediction that
+the **EA whitener fails first**: on a real fold it took 20.4 % relative RMS
+error at 4 bits versus 15.2 % for CSP, because it is built from
+`eigenvalue ** -0.5` and spans ~100x dynamic range (vs ~11x for CSP). The
+classifier, by contrast, was insensitive down to 4 bits.
+
+---
+
+## Configuration these runs use
+
+| Setting | Value | Why |
+|---|---|---|
+| `--seed 42` | fixed | Recorded in `pipeline_params.json`; runs are reproducible |
+| AMP | **off** | So the FP32 baseline is genuinely computed in FP32, not float16 |
+| `fast_lif` | **off** | Keeps the published snnTorch computation path exactly |
+| bands | fixed six-band | Matches the configuration behind the paper's results |
+
+Both `--amp` and `fast_lif=True` exist and are verified, but are off by
+default: neither is worth altering a validated pipeline for.
