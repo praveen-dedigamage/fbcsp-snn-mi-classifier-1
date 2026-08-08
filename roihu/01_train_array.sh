@@ -1,30 +1,40 @@
 #!/bin/bash
 # ============================================================================
-#  Roihu — BNCI2015-001 training array (12 subjects x 5 folds = 60 tasks)
+#  Roihu — BNCI2015-001 training array
+#  ONE TASK PER SUBJECT (12 tasks); the subject's 5 folds run CONCURRENTLY
+#  on the single reserved GH200.
 #
 #      sbatch roihu/01_train_array.sh
 #
-#  Partition/GRES verified against CSC docs (batch-job-partitions, Aug 2026):
-#      gputest    15 min   1-2 nodes   1-4 GPUs
-#      gpumedium  36 h     1-4 nodes   1-4 GPUs   <- used here
-#      gpularge   36 h     1-10 nodes  4 GPUs only (whole nodes)
-#  Each reserved GH200 grants 72 CPU cores and 217 GiB total memory.
+#  Why fold-packing instead of 60 one-fold tasks
+#  ---------------------------------------------
+#  This workload leaves the GPU mostly idle: the LIF loop is sequential over
+#  T=2561 timesteps on a 4k-parameter network, so each kernel is tiny and the
+#  GPU sat at 17-21 % utilisation locally. Measured on an RTX 3060:
 #
-#  Walltime rationale: measured 33 s/epoch on an RTX 3060 laptop, with the
-#  fold needing ~250 epochs under the paper protocol (patience 100) -> ~2.3 h.
-#  H100 should be faster, but the LIF loop is sequential over T=2561 and was
-#  only 17-21 % GPU-utilised locally, i.e. launch-overhead bound rather than
-#  compute bound, so do NOT assume a large speedup. 4 h is a safe margin;
-#  gpumedium permits up to 36 h if a fold overruns.
+#      1 process alone      8.04 s/iter            0.124 iter/s
+#      3 processes at once  9.53 s/iter each       0.315 iter/s  (2.53x)
+#
+#  i.e. three concurrent trainings each slow down only ~18 % while total
+#  throughput rises 2.5x. Packing a subject's 5 folds onto one GPU therefore
+#  turns ~11.5 h of serial work into roughly 3-4 h of wall clock, and bills
+#  12 GPU allocations instead of 60.
+#
+#  Memory is not the constraint: each process used ~1.5 GiB, and a reserved
+#  GH200 provides 95 GiB HBM3 (+122 GiB LPDDR5).
+#
+#  Partitions verified against CSC docs (batch-job-partitions, Aug 2026):
+#      gputest 15 min | gpumedium 36 h (used here) | gpularge whole nodes
+#  GPUs are requested as --gres=gpu:gh200:N.
 # ============================================================================
 #SBATCH --job-name=fbcsp_snn_train
 #SBATCH --account=project_XXXXXXX          # <-- EDIT: your CSC project
 #SBATCH --partition=gpumedium
 #SBATCH --gres=gpu:gh200:1
-#SBATCH --cpus-per-task=16
-#SBATCH --mem=64G
-#SBATCH --time=04:00:00
-#SBATCH --array=1-60
+#SBATCH --cpus-per-task=40                 # 5 concurrent folds; 72 cores available per GPU
+#SBATCH --mem=120G
+#SBATCH --time=08:00:00                    # ~3-4 h expected; margin for the slowest subject
+#SBATCH --array=1-12                       # one task per subject
 #SBATCH --output=logs/train_%A_%a.out
 #SBATCH --error=logs/train_%A_%a.err
 
@@ -32,54 +42,69 @@ set -euo pipefail
 cd "${SLURM_SUBMIT_DIR}"
 mkdir -p logs
 
-# ---- configuration ---------------------------------------------------------
 DATASET="BNCI2015_001"
 RESULTS_DIR="${RESULTS_DIR:-Results_bnci2015}"
 N_FOLDS=5
 SEED=42
-PYTORCH_MODULE="${PYTORCH_MODULE:-pytorch}"   # set to what `module spider pytorch` reports
+PYTORCH_MODULE="${PYTORCH_MODULE:-pytorch}"   # set from `module spider pytorch`
 
-# ---- map array index -> (subject, fold) ------------------------------------
-TASK=${SLURM_ARRAY_TASK_ID}
-SUBJECT_ID=$(( (TASK - 1) / N_FOLDS + 1 ))
-FOLD_IDX=$(( (TASK - 1) % N_FOLDS ))
+SUBJECT_ID=${SLURM_ARRAY_TASK_ID}
 
 module purge
 module load "${PYTORCH_MODULE}"
 
+# Keep each fold's thread pool small: 5 processes share the CPUs, and BLAS
+# over-subscription would slow all of them.
+export OMP_NUM_THREADS=$(( ${SLURM_CPUS_PER_TASK:-40} / N_FOLDS ))
+export MKL_NUM_THREADS="${OMP_NUM_THREADS}"
+
 echo "=============================================="
-echo "  Roihu task ${TASK}: subject ${SUBJECT_ID}, fold ${FOLD_IDX}"
+echo "  Roihu — subject ${SUBJECT_ID}, ${N_FOLDS} folds concurrently"
 echo "  node    : $(hostname)   arch: $(uname -m)"
-echo "  dataset : ${DATASET}"
-echo "  seed    : ${SEED}"
+echo "  threads : ${OMP_NUM_THREADS} per fold"
 echo "  started : $(date)"
 echo "=============================================="
 nvidia-smi --query-gpu=name,memory.total --format=csv,noheader || true
 
-# Flags below reproduce the configuration that produced the paper's results
-# (worktree run_puhti_array.sh): fixed six-band bank, dual-end CSP with m=4,
-# adaptive MIBIF at mi_fraction=0.1. --seed is new and makes runs reproducible.
-srun python -u main.py train \
-    --source moabb \
-    --moabb-dataset "${DATASET}" \
-    --subject-id "${SUBJECT_ID}" \
-    --fold "${FOLD_IDX}" \
-    --n-folds "${N_FOLDS}" \
-    --freq-bands "[(4,8),(8,14),(12,18),(16,24),(20,30),(26,40)]" \
-    --csp-components-per-band 8 \
-    --hidden-neurons 64 \
-    --population-per-class 20 \
-    --beta 0.95 \
-    --dropout-prob 0.5 \
-    --lr 1e-3 \
-    --weight-decay 0.1 \
-    --epochs 1000 \
-    --early-stopping-patience 100 \
-    --early-stopping-warmup 100 \
-    --spiking-prob 0.7 \
-    --feature-selection-method mibif \
-    --mi-fraction 0.1 \
-    --seed "${SEED}" \
-    --results-dir "${RESULTS_DIR}"
+# Launch all folds on the same GPU and wait for them together.
+pids=()
+for FOLD_IDX in $(seq 0 $(( N_FOLDS - 1 ))); do
+    python -u main.py train \
+        --source moabb \
+        --moabb-dataset "${DATASET}" \
+        --subject-id "${SUBJECT_ID}" \
+        --fold "${FOLD_IDX}" \
+        --n-folds "${N_FOLDS}" \
+        --freq-bands "[(4,8),(8,14),(12,18),(16,24),(20,30),(26,40)]" \
+        --csp-components-per-band 8 \
+        --hidden-neurons 64 \
+        --population-per-class 20 \
+        --beta 0.95 \
+        --dropout-prob 0.5 \
+        --lr 1e-3 \
+        --weight-decay 0.1 \
+        --epochs 1000 \
+        --early-stopping-patience 100 \
+        --early-stopping-warmup 100 \
+        --spiking-prob 0.7 \
+        --feature-selection-method mibif \
+        --mi-fraction 0.1 \
+        --seed "${SEED}" \
+        --results-dir "${RESULTS_DIR}" \
+        > "logs/s${SUBJECT_ID}_f${FOLD_IDX}.log" 2>&1 &
+    pids+=($!)
+    echo "  launched fold ${FOLD_IDX}  pid ${pids[-1]}"
+    sleep 5     # stagger startup so the folds do not race on the data cache
+done
 
-echo "finished: $(date)"
+# Fail the task if any fold fails, rather than exiting 0 on a partial result.
+status=0
+for i in "${!pids[@]}"; do
+    if ! wait "${pids[$i]}"; then
+        echo "!! fold ${i} FAILED (see logs/s${SUBJECT_ID}_f${i}.log)"
+        status=1
+    fi
+done
+
+echo "finished: $(date)  exit=${status}"
+exit ${status}
