@@ -75,3 +75,57 @@ def _select_device() -> torch.device:
 
 
 DEVICE: torch.device = _select_device()
+
+
+# ---------------------------------------------------------------------------
+# Global seeding (reproducibility)
+# ---------------------------------------------------------------------------
+
+def set_global_seed(seed: int = 42, deterministic: bool = True) -> None:
+    """Seed every RNG that affects a training run.
+
+    The scikit-learn components in this pipeline (CV splits, MIBIF, SVM) are
+    already fixed via ``random_state=42``, so the *data partitions* were
+    always reproducible.  The stochastic parts of SNN training were not:
+    weight initialisation, dropout masks, and the Van Rossum target spike
+    trains (sampled at ``spiking_prob``) all draw from torch's global RNG.
+    Without this call, two runs of the same configuration give different
+    weights and slightly different accuracies.
+
+    Parameters
+    ----------
+    seed : int
+        Seed applied to ``random``, ``numpy``, and ``torch`` (CPU and all
+        CUDA devices).
+    deterministic : bool
+        If True, also disable cuDNN autotuning and select deterministic
+        kernels.  This costs some throughput but makes GPU runs repeatable.
+        ``cudnn.benchmark`` is enabled by :func:`_select_device` for speed,
+        so it is explicitly turned off here.
+
+    Note
+    ----
+    Full bit-exact determinism on CUDA additionally requires
+    ``CUBLAS_WORKSPACE_CONFIG=:4096:8`` in the environment; it is set here
+    defensively before any cuBLAS handle is created.
+    """
+    import random
+
+    import numpy as np
+
+    os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
+    os.environ["PYTHONHASHSEED"] = str(seed)
+
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+    if deterministic:
+        torch.backends.cudnn.benchmark = False
+        torch.backends.cudnn.deterministic = True
+
+    setup_logger().info(
+        "Global seed set to %d (deterministic=%s)", seed, deterministic
+    )
