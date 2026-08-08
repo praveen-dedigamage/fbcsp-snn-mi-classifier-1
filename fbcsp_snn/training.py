@@ -349,6 +349,7 @@ def train_fold(
     device: Optional[torch.device] = None,
     fold_dir: Optional[Path] = None,
     log_every: int = 10,
+    use_amp: bool = False,
 ) -> FoldResult:
     """Train an SNN on one CV fold and return performance metrics.
 
@@ -419,8 +420,19 @@ def train_fold(
     model = model.to(device)
     optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
 
-    use_amp = device.type == "cuda"
+    # Mixed precision is OFF by default. AMP keeps FP32 master weights, so
+    # the saved checkpoint is FP32 either way -- but it computes the
+    # forward/backward in float16, which means an "FP32 baseline" would
+    # have been produced by 16-bit arithmetic. For a study whose subject
+    # IS numerical precision, that is a distinction worth not having to
+    # defend. It also costs little here: the workload is launch-overhead
+    # bound (GPU measured at 17-21 % utilisation), and AMP accelerates
+    # compute, not kernel launches.
+    use_amp = bool(use_amp) and device.type == "cuda"
     scaler = GradScaler(enabled=use_amp)
+    logger.info("AMP %s (checkpoint weights are FP32 regardless)",
+                "ENABLED - forward/backward in float16" if use_amp
+                else "disabled - full FP32 arithmetic")
 
     es = EarlyStopping(patience=patience, warmup=warmup)
     best_state: dict = {k: v.clone().cpu() for k, v in model.state_dict().items()}

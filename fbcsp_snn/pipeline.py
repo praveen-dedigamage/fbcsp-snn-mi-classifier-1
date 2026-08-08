@@ -303,6 +303,7 @@ def _run_single_fold(
         device=DEVICE,
         fold_dir=fold_dir,
         log_every=max(1, cfg.epochs // 20),
+        use_amp=cfg.use_amp,
     )
 
     # ---- FP32 evaluate ----
@@ -358,6 +359,7 @@ def _run_single_fold(
     params = {
         "subject_id":         cfg.subject_id,
         "seed":               cfg.seed,
+        "use_amp":            cfg.use_amp,
         "fold":               fold_idx,
         "dataset":            cfg.moabb_dataset,
         "n_classes":          n_classes,
