@@ -30,13 +30,16 @@ set -euo pipefail
 cd "${SLURM_SUBMIT_DIR}"
 mkdir -p logs
 
-DATASET="BNCI2015_001"
-RESULTS_DIR="${RESULTS_DIR:-Results_bnci2015}"
-OUT_DIR="${OUT_DIR:-Results_quant}"
-SUBJECTS="${SUBJECTS:-1 2 3 4 5 6 7 8 9 10 11 12}"
-N_FOLDS=5
-BITS="4 6 8 16 32"
-PYTORCH_MODULE="${PYTORCH_MODULE:-python-pytorch/2.10}"
+# DATASET / RESULTS_DIR / OUT_DIR / N_FOLDS / MNE_DATA / PYTORCH_MODULE.
+#     DATASET=Cho2017 SUBJECTS="$(seq 1 52)" sbatch roihu/02_quant_sweep.sh
+source roihu/env.sh
+
+case "${DATASET}" in
+    Cho2017) _default_subjects="$(seq 1 52 | tr '\n' ' ')" ;;
+    *)       _default_subjects="1 2 3 4 5 6 7 8 9 10 11 12" ;;
+esac
+SUBJECTS="${SUBJECTS:-${_default_subjects}}"
+BITS="${BITS:-4 6 8 16 32}"
 
 module purge
 module load "${PYTORCH_MODULE}"

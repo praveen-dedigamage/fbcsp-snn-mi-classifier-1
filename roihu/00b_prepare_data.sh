@@ -42,14 +42,23 @@ set -euo pipefail
 cd "${SLURM_SUBMIT_DIR}"
 mkdir -p logs
 
-PYTORCH_MODULE="${PYTORCH_MODULE:-python-pytorch/2.10}"
+# DATASET / MNE_DATA / PYTORCH_MODULE. For the 52-subject, 64-channel set:
+#     DATASET=Cho2017 sbatch --time=03:00:00 roihu/00b_prepare_data.sh
+source roihu/env.sh
+
+case "${DATASET}" in
+    Cho2017) N_SUBJECTS="${N_SUBJECTS:-52}" ;;
+    *)       N_SUBJECTS="${N_SUBJECTS:-12}" ;;
+esac
+
 module purge
 module load "${PYTORCH_MODULE}"
 
 echo "=== node: $(hostname)  arch: $(uname -m) ==="
-echo "=== caching BNCI2015_001, all 12 subjects ==="
+echo "=== caching ${DATASET}, ${N_SUBJECTS} subjects -> ${MNE_DATA} ==="
+df -h "${MNE_DATA}" | tail -1
 
-srun python -u - <<'PY'
+srun python -u - <<PY
 import warnings, logging, time
 warnings.filterwarnings("ignore")
 for n in ("moabb", "mne"):
@@ -59,18 +68,21 @@ from fbcsp_snn.config import Config
 from fbcsp_snn.pipeline import _load_raw
 
 t0 = time.time()
-for sid in range(1, 13):
+for sid in range(1, ${N_SUBJECTS} + 1):
     cfg = Config()
     cfg.source = "moabb"
-    cfg.moabb_dataset = "BNCI2015_001"
+    cfg.moabb_dataset = "${DATASET}"
     cfg.subject_id = sid
     cfg.n_classes = 2
     Xtr, ytr, Xte, yte = _load_raw(cfg)
     print(f"  S{sid:<3} train {Xtr.shape}  test {Xte.shape}  "
           f"[{time.time()-t0:.0f}s elapsed]", flush=True)
 
-print(f"\nall 12 subjects cached in {time.time()-t0:.0f}s -> ~/mne_data")
+print(f"\nall ${N_SUBJECTS} subjects cached in {time.time()-t0:.0f}s")
 PY
+
+echo "=== cache size ==="
+du -sh "${MNE_DATA}"
 
 echo "=== done: $(date) ==="
 echo "Next:  sbatch roihu/preflight.sh"

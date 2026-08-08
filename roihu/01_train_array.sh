@@ -42,11 +42,11 @@ set -euo pipefail
 cd "${SLURM_SUBMIT_DIR}"
 mkdir -p logs
 
-DATASET="BNCI2015_001"
-RESULTS_DIR="${RESULTS_DIR:-Results_bnci2015}"
-N_FOLDS=5
-SEED=42
-PYTORCH_MODULE="${PYTORCH_MODULE:-python-pytorch/2.10}"   # from `module spider python-pytorch`
+# DATASET / RESULTS_DIR / N_FOLDS / SEED / MNE_DATA / PYTORCH_MODULE.
+# Override at submit time, e.g. for the 52-subject Cho2017 run:
+#     DATASET=Cho2017 sbatch --array=1-52 --time=12:00:00 roihu/01_train_array.sh
+# (--array and --time must be sbatch flags: #SBATCH lines cannot read variables.)
+source roihu/env.sh
 
 SUBJECT_ID=${SLURM_ARRAY_TASK_ID}
 
