@@ -348,20 +348,55 @@ def compute_energy_table(records: List[Dict]) -> List[Dict]:
 # Print + save
 # ---------------------------------------------------------------------------
 
-def _print_frontend_breakdown(mean_snn_l2_uj: float, mean_snn_l1_uj: float) -> None:
+def _print_frontend_breakdown(
+    mean_snn_l2_uj: float,
+    mean_snn_l1_uj: float,
+    n_channels: int = N_EEG_CHANNELS,
+    n_samples: int = N_SAMPLES,
+    trial_s: float = TRIAL_DURATION_S,
+    n_class_pairs: int = 6,
+    n_bands: int = 6,
+) -> None:
     """Print the whole-pipeline energy budget as a BOUNDED RANGE.
 
     The range is set by the encoder: a lean digital comparator bank
-    (~1 uJ) vs. a full analog signal-to-spike ASIC (~0.55 mJ). Per-stage
-    figures are DOI-verified precedents from INDEPENDENT designs, not one
-    validated system -- hence a range, not a single number. Matches the
-    paper's energy section.
+    (~1 uJ) vs. a full analog signal-to-spike ASIC. Per-stage figures are
+    DOI-verified precedents from INDEPENDENT designs, not one validated
+    system -- hence a range, not a single number.
+
+    Every stage scales with the recording geometry, so the defaults (22
+    channels, 1001 samples, 4 s, 6 class pairs) describe BNCI2014-001 only.
+    A binary dataset has one class pair and its own channel count and window,
+    which changes the filter count, the crossbar size and the analog encoder
+    term. Passing the wrong geometry silently yields a plausible but wrong
+    whole-pipeline figure, so the caller must supply it.
+
+    Parameters
+    ----------
+    mean_snn_l2_uj, mean_snn_l1_uj : float
+        Measured classifier energy on Loihi 2 / Loihi 1, in uJ.
+    n_channels : int
+        EEG channels; sets the Gm-C filter count and the analog encoder term.
+    n_samples : int
+        Samples per trial; sets the crossbar MAC count.
+    trial_s : float
+        Trial window in seconds; the always-on stages are power x time.
+    n_class_pairs : int
+        ``C(n_classes, 2)`` -- 1 for a binary task, 6 for four classes.
+    n_bands : int
+        Filter-bank size.
     """
-    e_gmc_uj      = E_GMC_J             * 1e6
-    e_csp_uj      = E_CSP_J             * 1e6
+    n_gmc_filters = n_bands * n_channels
+    e_gmc_j = 128.7e-9 * n_gmc_filters * trial_s
+    n_csp_macs = n_samples * n_bands * n_channels * (n_class_pairs * 8)
+    e_csp_j = n_csp_macs * E_CROSSBAR_PER_MAC
+    e_encoder_analog_j = 6.2e-6 * n_channels * trial_s
+
+    e_gmc_uj      = e_gmc_j             * 1e6
+    e_csp_uj      = e_csp_j             * 1e6
     e_mibif_uj    = E_MIBIF_J           * 1e6
     e_enc_lean_uj = E_ENCODER_DIGITAL_J * 1e6
-    e_enc_con_uj  = E_ENCODER_ANALOG_J  * 1e6
+    e_enc_con_uj  = e_encoder_analog_j  * 1e6
 
     fixed_uj      = e_gmc_uj + e_csp_uj + e_mibif_uj + mean_snn_l2_uj
     total_lean_uj = fixed_uj + e_enc_lean_uj
@@ -371,7 +406,8 @@ def _print_frontend_breakdown(mean_snn_l2_uj: float, mean_snn_l1_uj: float) -> N
     e_gpu_full_uj = E_GPU_FULL_TDP_J * 1e6
 
     print(f"\n{'='*78}")
-    print(f"  Whole-Pipeline Energy (4-second MI trial) -- BOUNDED RANGE")
+    print(f"  Whole-Pipeline Energy ({trial_s:.0f}-second MI trial, "
+          f"{n_channels} ch, {n_class_pairs} class pair(s)) -- BOUNDED RANGE")
     print(f"  The SNN stage is a spike-count estimate for a real digital chip")
     print(f"  (Loihi 2). The analog front-end stages are DOI-verified per-stage")
     print(f"  precedents from INDEPENDENT designs, not one validated system --")
@@ -380,8 +416,10 @@ def _print_frontend_breakdown(mean_snn_l2_uj: float, mean_snn_l1_uj: float) -> N
     print(f"  {'Stage':<36}  {'Energy (uJ)':>15}  Reference")
     print(f"  {'-'*74}")
     stages = [
-        ("Gm-C filter bank (132 filters)",  f"{e_gmc_uj:7.1f}",                       "Gallegos 2014 [3]"),
-        ("CSP crossbar (~6.3M MAC)",        f"{e_csp_uj:7.1f}",                       "Burr 2017 [6] (repr.)"),
+        (f"Gm-C filter bank ({n_gmc_filters} filters)",
+                                            f"{e_gmc_uj:7.1f}",                       "Gallegos 2014 [3]"),
+        (f"CSP crossbar (~{n_csp_macs/1e6:.1f}M MAC)",
+                                            f"{e_csp_uj:7.1f}",                       "Burr 2017 [6] (repr.)"),
         ("MIBIF comparator bank",           f"{e_mibif_uj:7.1f}",                     "negligible"),
         ("Spike encoder (lean .. analog)",  f"{e_enc_lean_uj:.0f} .. {e_enc_con_uj:.0f}", "digital .. Sharif 2021 [5]"),
         ("SNN classifier (Loihi 2)",        f"{mean_snn_l2_uj:7.1f}",                 "This work"),
@@ -478,6 +516,16 @@ def _write_csv(rows: List[Dict], output_dir: Path) -> None:
 
 def _parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Item 9: Loihi 2 energy estimation.")
+    p.add_argument("--n-channels", type=int, default=N_EEG_CHANNELS,
+                   help="EEG channels; sets the Gm-C filter count and the "
+                        "analog encoder term. 22 for BNCI2014-001 (default), "
+                        "13 for BNCI2015-001, 64 for Cho2017. Everything else "
+                        "about the geometry is read from the artifacts.")
+    p.add_argument("--from-artifacts", action="store_true",
+                   help="Skip the Lava summary and take SynOps from the "
+                        "per-fold measured spike counts in --results-dir. "
+                        "Use for datasets with no Loihi/Lava run (e.g. the "
+                        "binary sets). Requires --results-dir and --subjects.")
     p.add_argument("--lava-dir",    default="Results_lava",
                    help="Directory containing lava_summary.csv")
     p.add_argument("--output-dir",  default="Results_energy")
@@ -500,14 +548,45 @@ def main() -> None:
     lava_dir   = Path(args.lava_dir)
     output_dir = Path(args.output_dir)
 
-    logger.info("Loading Lava SynOps from %s", lava_dir)
-    records = load_summary(lava_dir)
-    logger.info("Loaded %d subject records", len(records))
+    if args.from_artifacts:
+        # No Lava run required. SynOps come from this codebase's own
+        # instrumentation, measured during training and stored per fold, so a
+        # dataset can be costed as soon as it has finished training. Used for
+        # the binary datasets, where no Loihi/Lava run exists: installing and
+        # running the simulator only to recover a count we already measured
+        # would add a dependency without adding evidence.
+        if args.results_dir is None or args.subjects is None:
+            logger.error("--from-artifacts requires --results-dir and --subjects")
+            return
+        synops = load_pytorch_side_synops(
+            Path(args.results_dir), args.subjects, args.n_folds
+        )
+        if not synops:
+            logger.error(
+                "No usable folds in %s. Folds trained before the per-layer "
+                "event breakdown existed carry no spike counts.",
+                args.results_dir,
+            )
+            return
+        # lava_mean is left as NaN: accuracy is not measured here, and
+        # zero-filling it would read as a real 0 % in the CSV.
+        records = [
+            {"subject": s, "synops_total_mean": v, "lava_mean": float("nan")}
+            for s, v in sorted(synops.items())
+        ]
+        logger.info(
+            "SynOps from measured artifacts for %d subjects (no Lava run)",
+            len(records),
+        )
+    else:
+        logger.info("Loading Lava SynOps from %s", lava_dir)
+        records = load_summary(lava_dir)
+        logger.info("Loaded %d subject records", len(records))
 
     rows = compute_energy_table(records)
     _print_table(rows)
 
-    if args.results_dir is not None:
+    if not args.from_artifacts and args.results_dir is not None:
         if args.subjects is None:
             logger.error("--subjects is required when --results-dir is set")
         else:
@@ -518,7 +597,32 @@ def main() -> None:
 
     mean_l2_uj = float(np.mean([r["energy_loihi2_uJ"] for r in rows]))
     mean_l1_uj = float(np.mean([r["energy_loihi1_uJ"] for r in rows]))
-    _print_frontend_breakdown(mean_l2_uj, mean_l1_uj)
+
+    # Recording geometry drives every front-end stage. Read what the run
+    # actually recorded rather than trusting the 4-class defaults; only the
+    # channel count has no home in pipeline_params.json and must be given.
+    geom = dict(n_channels=args.n_channels, n_samples=N_SAMPLES,
+                trial_s=TRIAL_DURATION_S, n_class_pairs=6, n_bands=6)
+    if args.results_dir is not None and args.subjects:
+        first = (Path(args.results_dir) / f"Subject_{args.subjects[0]}"
+                 / "fold_0" / "pipeline_params.json")
+        if first.exists():
+            with open(first) as f:
+                p = json.load(f)
+            n_cls = int(p.get("n_classes", 4))
+            geom["n_samples"] = int(p.get("n_timesteps", N_SAMPLES))
+            geom["n_class_pairs"] = n_cls * (n_cls - 1) // 2
+            geom["n_bands"] = len(p.get("bands", [])) or 6
+            sfreq = {"BNCI2015_001": 512.0, "Cho2017": 512.0,
+                     "BNCI2014_001": 250.0}.get(p.get("dataset"), 250.0)
+            geom["trial_s"] = geom["n_samples"] / sfreq
+            logger.info(
+                "Front-end geometry from artifacts: %d samples, %.1f s, "
+                "%d band(s), %d class pair(s); channels=%d (from --n-channels)",
+                geom["n_samples"], geom["trial_s"], geom["n_bands"],
+                geom["n_class_pairs"], geom["n_channels"],
+            )
+    _print_frontend_breakdown(mean_l2_uj, mean_l1_uj, **geom)
 
     _write_csv(rows, output_dir)
 

@@ -78,12 +78,26 @@ login node: reads JSON/CSV only, no torch import.
 ### 5. Binary energy estimate
 
 ```bash
-python compute_energy.py --results-dir Results_bnci2015 --subjects 1 2 3 4 5 6 7 8 9 10 11 12 --n-folds 5 --output-dir Results_energy
+python compute_energy.py --from-artifacts --n-channels 13 --results-dir Results_bnci2015 --subjects 1 2 3 4 5 6 7 8 9 10 11 12 --n-folds 5 --output-dir Results_energy
 ```
 
+Writes `Results_energy/energy_summary.csv`. numpy/stdlib only, so login-node
+safe.
+
+`--from-artifacts` is required: without it the tool demands
+`Results_lava/lava_summary.csv`, and no Loihi/Lava run exists for the binary
+datasets. SynOps then come from this codebase's own per-fold instrumentation
+(`mean_input_events_per_trial * n_hidden + mean_hidden_events_per_trial *
+n_output`), measured during training.
+
+`--n-channels` matters: the front-end stages scale with recording geometry,
+and the defaults describe BNCI2014-001 (22 ch). Everything else -- samples,
+window length, band count, class pairs -- is read from
+`pipeline_params.json`, so only the channel count has to be supplied. For
+Cho2017 use `--n-channels 64`.
+
 Replaces the 13.9 uJ figure, which was measured on the **4-class** network
-(288 features, 80 output neurons). Reads the measured per-layer spike counts
-from each fold's `pipeline_params.json`.
+(288 features, 80 output neurons, 22 channels, 4 s window).
 
 ### 6. Cross-subject summary
 
