@@ -135,7 +135,21 @@ Required before any comparative accuracy claim: the 72.1 -> 74.7 shift moves
 every paired comparison, and the SNN-vs-LDA gap narrowed from 4.6 to 2.0
 points, which may no longer be significant.
 
-### 8. EA/CSP fusion — **needs code**
+### 8. EA/CSP fusion
+
+```bash
+python fusion_experiment.py --results-dir Results_bnci2015 --subjects 1 2 3 4 5 6 7 8 9 10 11 12 --n-folds 5 --output-dir Results_fusion
+```
+
+Writes `Results_fusion/fusion_BNCI2015_001.{csv,json}`. Needs a GPU (it
+re-runs the encoder and classifier), so submit it rather than running on the
+login node. Start with `--subjects 1 2 3` to check the FP32 identity holds
+before committing to all 12.
+
+Reports four things: whether the fusion is exact in FP32 (it must be --
+`max_projection_rel_err` below 1e-6, else the assumed transform order is
+wrong), the front-end storage reduction, the dynamic range of each matrix
+set, and split-vs-fused accuracy at every bit-width.
 
 EA and CSP are consecutive linear maps: `Y = W^T (R^-1/2 X)`, and `R^-1/2` is
 symmetric, so `W_eff = R^-1/2 W` can be precomputed once.
