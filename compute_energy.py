@@ -418,8 +418,11 @@ def _print_frontend_breakdown(
     stages = [
         (f"Gm-C filter bank ({n_gmc_filters} filters)",
                                             f"{e_gmc_uj:7.1f}",                       "Gallegos 2014 [3]"),
+        # <0.1 rather than 0.0: the crossbar really is negligible, but
+        # printing 0.0 reads as "not counted" rather than "counted, tiny".
         (f"CSP crossbar (~{n_csp_macs/1e6:.1f}M MAC)",
-                                            f"{e_csp_uj:7.1f}",                       "Burr 2017 [6] (repr.)"),
+                                            (f"{e_csp_uj:7.1f}" if e_csp_uj >= 0.05
+                                             else f"{'<0.1':>7}"),                    "Burr 2017 [6] (repr.)"),
         ("MIBIF comparator bank",           f"{e_mibif_uj:7.1f}",                     "negligible"),
         ("Spike encoder (lean .. analog)",  f"{e_enc_lean_uj:.0f} .. {e_enc_con_uj:.0f}", "digital .. Sharif 2021 [5]"),
         ("SNN classifier (Loihi 2)",        f"{mean_snn_l2_uj:7.1f}",                 "This work"),
@@ -440,6 +443,39 @@ def _print_frontend_breakdown(
     print(f"  slice; the always-on analog front end sets the budget. The headline")
     print(f"  classifier-only margin ({e_cpu_uj/mean_snn_l2_uj:,.0f}x vs CPU) narrows to")
     print(f"  ~1e2x once the front end is counted.\n")
+
+    # Returned so the caller can persist it. This breakdown, not the
+    # per-subject CSV, is what the paper quotes, and it should exist as an
+    # artifact rather than only in a terminal buffer.
+    return {
+        "geometry": {
+            "n_channels": n_channels, "n_samples": n_samples,
+            "trial_seconds": trial_s, "n_class_pairs": n_class_pairs,
+            "n_bands": n_bands, "n_gmc_filters": n_gmc_filters,
+            "n_csp_macs": int(n_csp_macs),
+        },
+        "stages_uJ": {
+            "gmc_filter_bank": round(e_gmc_uj, 4),
+            "csp_crossbar": round(e_csp_uj, 4),
+            "mibif_comparators": round(e_mibif_uj, 4),
+            "spike_encoder_digital": round(e_enc_lean_uj, 4),
+            "spike_encoder_analog": round(e_enc_con_uj, 4),
+            "snn_classifier_loihi2": round(mean_snn_l2_uj, 4),
+            "snn_classifier_loihi1": round(mean_snn_l1_uj, 4),
+        },
+        "whole_pipeline_uJ": {
+            "low": round(total_lean_uj, 4), "high": round(total_con_uj, 4),
+            "note": "range set by the spike encoder: lean digital vs analog ASIC",
+        },
+        "digital_reference_uJ": {
+            "edge_cpu_arm_a72": e_cpu_uj, "gpu_v100_full_tdp": e_gpu_full_uj,
+        },
+        "caveat": (
+            "Front-end stages are DOI-verified per-stage precedents from "
+            "independent designs, not one validated system; the classifier "
+            "term is a spike-count estimate, not a hardware measurement."
+        ),
+    }
 
 
 def _print_table(rows: List[Dict]) -> None:
@@ -474,7 +510,9 @@ def _print_table(rows: List[Dict]) -> None:
           f"{np.mean(e_l2_vals):>10.1f}")
     print(f"{'='*72}")
 
-    print(f"\n  Energy comparison (per inference, mean over 9 subjects)")
+    # Count comes from the data: hard-coding 9 was correct only for
+    # BNCI2014-001 and silently mislabels every other dataset.
+    print(f"\n  Energy comparison (per inference, mean over {len(rows)} subjects)")
     print(f"  {'-'*52}")
     print(f"  {'Platform':<30}  {'Energy':>10}  {'vs Loihi 2':>10}")
     print(f"  {'-'*52}")
@@ -622,7 +660,16 @@ def main() -> None:
                 geom["n_samples"], geom["trial_s"], geom["n_bands"],
                 geom["n_class_pairs"], geom["n_channels"],
             )
-    _print_frontend_breakdown(mean_l2_uj, mean_l1_uj, **geom)
+    breakdown = _print_frontend_breakdown(mean_l2_uj, mean_l1_uj, **geom)
+    breakdown["n_subjects"] = len(rows)
+    breakdown["synops_source"] = (
+        "measured per-fold artifacts" if args.from_artifacts else "lava_summary.csv"
+    )
+    output_dir.mkdir(parents=True, exist_ok=True)
+    breakdown_path = output_dir / "energy_breakdown.json"
+    with open(breakdown_path, "w") as f:
+        json.dump(breakdown, f, indent=2)
+    logger.info("Whole-pipeline breakdown saved -> %s", breakdown_path)
 
     _write_csv(rows, output_dir)
 
