@@ -1,279 +1,206 @@
-# FBCSP-SNN — Experimental Log
+# Experiment runbook — CNA 2026 (binary-only paper)
 
-This document records every algorithmic modification attempted, its rationale,
-and its measured effect on cross-subject classification accuracy (BNCI2014_001,
-9 subjects, 4 classes, 5-fold CV, session 1 train / session 2 test).
+Living checklist. Update the **Status** column as things finish; the commands
+below are the authoritative ones to copy.
 
----
+Paper scope: binary motor imagery only, BNCI2015-001 (primary) and Cho2017
+(secondary). Deadline **2 September 2026**.
 
-## Baseline (pre-adaptive pipeline)
-
-**Configuration:** Static 3-band filter bank, 22 CSP components (standard single-end),
-std-based feature selection, no Euclidean Alignment.
-
-| Subject | Test FP32 (%) | Test INT8 (%) |
-|---------|--------------|--------------|
-| S1 | 85.3 | 86.0 |
-| S2 | 45.4 | 45.8 |
-| S3 | 73.8 | 73.6 |
-| S4 | 54.3 | 53.3 |
-| S5 | 44.4 | 44.8 |
-| S6 | 51.7 | 51.5 |
-| S7 | 76.6 | 75.4 |
-| S8 | 79.6 | 79.5 |
-| S9 | 72.4 | 70.9 |
-| **Mean** | **64.8** | **64.5** |
+Working dir on Roihu: `/scratch/project_2003397/praveen/fbcsp`
 
 ---
 
-## V3 — Adaptive bands + Euclidean Alignment + Riemannian mean covariance
+## Status board
 
-**Tag:** `v3`
-
-### Changes introduced
-
-| Component | Change | Rationale |
-|-----------|--------|-----------|
-| Band selection | Fisher ERD/ERS adaptive selection (6 bands, 4–30 Hz) replacing static 3-band | Selects physiologically relevant bands per subject per fold from training data only |
-| CSP covariance | Riemannian (Fréchet) mean replacing arithmetic mean | More geometrically correct mean on the SPD manifold; reduces sensitivity to outlier trials |
-| Euclidean Alignment (EA) | Per-band whitening `X̃ = R^{-1/2} X` before CSP fitting | Reduces cross-trial covariance non-stationarity within session 1 |
-| CV splitter | StratifiedKFold(5-fold, 80/20) on session 1 | Deterministic, stratified train/val splits |
-| Feature selection | MIBIF top 50% (mutual information best individual feature) | Prunes session-1-specific noise features |
-| SNN | 2-layer LIF, hidden=64, population_per_class=20 | Baseline SNN architecture |
-
-### Results
-
-| Subject | Baseline | V3 | Δ vs Baseline |
-|---------|----------|-----|--------------|
-| S1 | 85.3% | 81.4% | -3.9pp |
-| S2 | 45.4% | 41.1% | -4.3pp |
-| S3 | 73.8% | 75.6% | +1.8pp |
-| S4 | 54.3% | 61.2% | **+6.9pp** |
-| S5 | 44.4% | 40.6% | -3.8pp |
-| S6 | 51.7% | 52.8% | +1.1pp |
-| S7 | 76.6% | 67.7% | -8.9pp |
-| S8 | 79.6% | 77.5% | -2.1pp |
-| S9 | 72.4% | 77.3% | **+4.9pp** |
-| **Mean** | **64.8%** | **63.9%** | **-0.9pp** |
-
-### Analysis
-
-- EA + Riemannian mean helped weak subjects (S4, S9) but hurt strong subjects (S1, S7, S8).
-- Large cross-session val-test gaps persisted (S7: 85.8% val vs 67.7% test = 18.1pp).
-- Net effect slightly negative. The adaptive bands helped S4 and S9 but EA introduced
-  regressions in subjects where session-1 covariance was already discriminative.
+| # | Experiment | Status | Cost | Blocks |
+|---|---|---|---|---|
+| 1 | BNCI2015-001 training, 12 subj x 5 folds | **DONE** | ~1,800 BU | — |
+| 2 | Uniform (whole-pipeline) quantisation sweep, B15 | **DONE** | in job 525714 | — |
+| 3 | Per-group quantisation sweep, B15 | **RUNNING** (525714) | — | 4, 7 |
+| 4 | Collect evidence bundle | TODO | free | needs 3 |
+| 5 | Binary energy estimate | TODO | free | — |
+| 6 | Cross-subject summary table | TODO | free | — |
+| 7 | Paired significance tests | TODO (needs code) | free | needs 4 |
+| 8 | EA/CSP fusion experiment | TODO (needs code) | ~1 short job | — |
+| 9 | Fair-baseline control, B15 | TODO (needs Roihu wrapper) | moderate | — |
+| 10 | Move MOABB cache to scratch | TODO | free | needs 3 |
+| 11 | Cho2017 data prep | TODO | ~1 job | needs 10 |
+| 12 | Cho2017 pilot (3 subjects) | TODO | ~800 BU | needs 11 |
+| 13 | Cho2017 full training (52 subjects) | TODO | ~13,000 BU (est.) | needs 12 |
+| 14 | Cho2017 quantisation sweep | TODO | moderate | needs 13 |
 
 ---
 
-## Hyperparameter sweep experiments (all relative to V3)
+## Results so far
 
-These experiments tested regularisation and split ratio adjustments on a 4-subject
-proxy set (S1, S2, S5, S8) before committing to full 9-subject runs.
+BNCI2015-001, 12 subjects, cross-session (session 1 -> session 2), mean of
+per-subject fold means:
 
-### Split ratio experiments
+| Method | Accuracy |
+|---|---|
+| FBCSP + LDA | 76.7 +/- 14.6 |
+| **FBCSP-SNN** | **74.7 +/- 16.0** |
+| FBCSP + SVM | 72.0 +/- 14.1 |
 
-| Split | Train trials | Val trials | Grand mean (4 subjects) | Outcome |
-|-------|-------------|-----------|------------------------|---------|
-| 80/20 KFold (V3) | ~230 | ~58 | 63.9% | **Best** |
-| 90/10 ShuffleSplit | ~259 | ~29 | 59.4% | Worse — 29 val trials too noisy for early stopping (1 error = 3.4% swing) |
-| 70/30 ShuffleSplit | ~202 | ~86 | mixed | Worse for most — less training data outweighed the benefit of more reliable val signal |
+Reproduces the earlier Puhti run: LDA and SVM match the published 76.7 / 72.0
+exactly, confirming the front end and split are unchanged. The SNN is +2.6 on
+the previously reported 72.1, consistent with training stochasticity on
+different hardware (V100 -> GH200; earlier runs predate global seeding).
 
-**Conclusion:** 80/20 StratifiedKFold is the optimal split. Early stopping requires
-at least ~58 val trials (≈7 per class) for reliable checkpoint selection.
+Whole-pipeline quantisation (all five parameter groups at once):
 
-### Feature selection percentile
+| Bits | Accuracy | Delta |
+|---|---|---|
+| 32 | 74.7 +/- 16.0 | 0.0 (exact — harness check) |
+| 16 | 74.8 | +0.1 |
+| 8 | 74.8 | +0.1 |
+| 6 | 73.1 | -1.6 |
+| **4** | **53.9 +/- 4.0** | **-20.8** |
 
-| Percentile | Features kept | Grand mean vs V3 | Outcome |
-|-----------|--------------|-----------------|---------|
-| 50% (V3) | 72 features | — | Baseline |
-| 30% | 43 features | -6.2pp | Removes useful discriminative features along with noise |
-
-**Conclusion:** 50% is the right threshold. Pruning to 30% removes signal, not just noise.
-
-### Model capacity
-
-| Hidden neurons | Parameters (fc1) | Grand mean vs V3 | Outcome |
-|---------------|-----------------|-----------------|---------|
-| 64 (V3) | 72×64 = 4,608 | — | Baseline |
-| 32 | 72×32 = 2,304 | ≈0pp (flat) | No effect — overfitting is cross-session, not model-size driven |
-
-**Conclusion:** The cross-session val-test gap is not caused by model overfitting in the
-classical sense. Reducing model capacity does not improve test accuracy.
-
-### Key insight from sweep
-
-All regularisation-based interventions (smaller model, fewer features, larger val set)
-failed to close the cross-session gap. The gap is caused by genuine EEG non-stationarity
-between session 1 (train) and session 2 (test), not by conventional overfitting.
-The solution requires richer feature representations that capture session-stable patterns,
-not stronger regularisation.
+At 4 bits the SD collapses from 16.0 to 4.0: every subject converges on chance
+regardless of prior accuracy. Damage is proportional to available signal
+(S1 loses 48 points; S6, already at 56%, loses none).
 
 ---
 
-## V4 — 9 adaptive bands + 6 CSP components per band
+## Commands, in execution order
 
-**Tag:** `v4`
+### 4. Collect evidence bundle  *(after 525714 exits)*
 
-### Changes vs V3
+```bash
+python collect_results.py --dataset BNCI2015_001 --n-folds 5 --expect-subjects 12
+```
 
-| Component | V3 | V4 | Rationale |
-|-----------|----|----|-----------|
-| Adaptive bands | 6 bands | **9 bands** | More frequency resolution; captures more of the 4–40 Hz MI-relevant spectrum |
-| CSP components per band | 4 (2 per end) | **6 (3 per end)** | More spatial filters per band; more diverse spatial patterns per frequency region |
-| Total features (pre-MIBIF) | 6 pairs × 4 × 6 bands = 144 | 6 pairs × 6 × 9 bands = **324** | 2.25× richer feature space |
-| Features after MIBIF 50% | 72 | **162** | SNN input size more than doubled |
+Writes `results_bundle_BNCI2015_001.json` (canonical, with provenance and
+integrity checks) and `results_summary_BNCI2015_001.md`. Light enough for the
+login node: reads JSON/CSV only, no torch import.
 
-### Results
+### 5. Binary energy estimate
 
-| Subject | Baseline | V3 | V4 | Δ vs V3 | Δ vs Baseline |
-|---------|----------|-----|-----|---------|--------------|
-| S1 | 85.3% | 81.4% | 82.6% | +1.2pp | -2.7pp |
-| S2 | 45.4% | 41.1% | 44.7% | +3.6pp | -0.7pp |
-| S3 | 73.8% | 75.6% | 77.8% | +2.2pp | **+4.0pp** |
-| S4 | 54.3% | 61.2% | 63.5% | +2.3pp | **+9.2pp** |
-| S5 | 44.4% | 40.6% | 45.3% | +4.7pp | +0.9pp |
-| S6 | 51.7% | 52.8% | 54.3% | +1.5pp | +2.6pp |
-| S7 | 76.6% | 67.7% | 72.5% | +4.8pp | -4.1pp |
-| S8 | 79.6% | 77.5% | 80.3% | +2.8pp | +0.7pp |
-| S9 | 72.4% | 77.3% | 80.7% | +3.4pp | **+8.3pp** |
-| **Mean** | **64.8%** | **63.9%** | **66.9%** | **+3.0pp** | **+2.1pp** |
+```bash
+python compute_energy.py --results-dir Results_bnci2015 --subjects 1 2 3 4 5 6 7 8 9 10 11 12 --n-folds 5 --output-dir Results_energy
+```
 
-### Analysis
+Replaces the 13.9 uJ figure, which was measured on the **4-class** network
+(288 features, 80 output neurons). Reads the measured per-layer spike counts
+from each fold's `pipeline_params.json`.
 
-- **Every subject improved vs V3** — the first experiment with universal improvement.
-- **First result to beat the baseline** (66.9% vs 64.8%, +2.1pp).
-- The richer feature set (324 → 162 features after MIBIF) exposes the SNN to a more
-  diverse set of spatial-frequency combinations. MIBIF then selects the subset most
-  discriminative for each fold, which tends to favour session-stable patterns.
-- Largest gains: S4 (+9.2pp vs baseline), S9 (+8.3pp vs baseline) — subjects where
-  cross-session covariance shift is the dominant challenge.
-- Remaining gap to 70% target: **3.1pp**.
+### 6. Cross-subject summary
 
----
+```bash
+python analyze_results.py --results-dir Results_bnci2015 --moabb-dataset BNCI2015_001 --subjects 1 2 3 4 5 6 7 8 9 10 11 12
+```
 
-## Ongoing experiments (results pending)
+### 7. Paired significance tests — **needs code**
 
-### Band count scaling (12 bands, 6 CSP)
+No general tool exists: `analyze_results.py` has no significance testing and
+`sig_test_ablation.py` is hard-coded with no CLI. Paired t / Wilcoxon belongs
+in `collect_results.py`, which already loads every per-subject mean.
 
-**Hypothesis:** Extending from 9 to 12 adaptive bands further increases frequency
-resolution and may capture additional session-stable MI patterns.
+Required before any comparative accuracy claim: the 72.1 -> 74.7 shift moves
+every paired comparison, and the SNN-vs-LDA gap narrowed from 4.6 to 2.0
+points, which may no longer be significant.
 
-**4-subject pilot (S1, S2, S5, S9):**
+### 8. EA/CSP fusion — **needs code**
 
-| Subject | V4 (9b6c) | 12b6c | Δ |
-|---------|-----------|-------|---|
-| S1 | 82.6% | 81.9% | -0.7pp |
-| S9 | 80.7% | 80.8% | +0.1pp |
-| S2 | 44.7% | 46.1% | +1.4pp |
-| S5 | 45.3% | 45.7% | +0.4pp |
+EA and CSP are consecutive linear maps: `Y = W^T (R^-1/2 X)`, and `R^-1/2` is
+symmetric, so `W_eff = R^-1/2 W` can be precomputed once.
 
-**Observation:** Marginal and subject-specific. 9 bands appears to be the sweet spot
-for band count. Going 6→9 gave +3pp grand mean; going 9→12 is flat.
+Two predictions, both testable on saved artifacts with no retraining:
 
-### CSP component scaling (9 bands, 8 CSP)
+- storage per band falls from `n_ch^2 + n_ch*2m` to `n_ch*2m` — at Cho2017's
+  64 channels, 4,608 -> 512 values, a **9x** front-end reduction
+- the 4-bit collapse disappears, since the wide-dynamic-range whitener
+  (built from `eigenvalue^-0.5`) is no longer quantised separately
 
-**Hypothesis:** More spatial filters per band captures greater diversity of spatial
-patterns, some of which may be more session-stable.
+Highest value per unit of compute of anything on this list: it converts
+"EA is fragile" into a design fix.
 
-**4-subject pilot (S1, S2, S5, S9):**
+### 9. Fair-baseline control (B15) — **needs Roihu wrapper**
 
-| Subject | V4 (9b6c) | 9b8c | Δ |
-|---------|-----------|------|---|
-| S1 | 82.6% | 81.5% | -1.1pp |
-| S9 | 80.7% | 82.6% | +1.9pp |
-| S2 | 44.7% | 44.2% | -0.5pp |
-| S5 | 45.3% | 46.9% | +1.6pp |
+`run_fair_baseline.py` and `run_fair_baseline_array.sh` exist but are
+Puhti-shaped. This underwrites the paper's strongest claim: LDA/SVM given the
+same full time series the SNN receives collapse to chance, so the SNN wins
+4/4 comparisons.
 
-**Observation:** Subject-specific gains. Neither axis (more bands, more CSP) consistently
-outperforms V4 on all subjects.
+### 10. Move the MOABB cache to scratch  *(only after 525714 exits)*
 
-### Combined scaling (12 bands, 8 CSP) — Fisher threshold sweep
+```bash
+git pull && mv ~/mne_data /scratch/project_2003397/praveen/mne_data
+```
 
-**Hypothesis:** Combining both axes (432 features → 216 after MIBIF) may capture
-additive benefits. Root cause analysis of S6 revealed that with 12 bands, the
-adaptive selector was forced to pick high-gamma noise bands (24–40 Hz) — likely
-EMG artifacts that are discriminative in session 1 but don't transfer to session 2.
+`roihu/env.sh` derives `MNE_DATA` from the submit directory, so this needs no
+editing. Moving rather than re-downloading preserves the BNCI2015-001 cache.
 
-**Fix:** Added `min_fisher_fraction` parameter to `band_selection.py`. Any candidate
-band scoring below `top_score × min_fisher_fraction` is rejected, preventing noise
-bands from being forced in.
+Do **not** run this while 525714 is alive — it calls `_load_raw()` per subject
+and would fail on the remainder.
 
-**Threshold sweep on S6 (12b8c):**
+### 11. Cho2017 data prep
 
-| mff | Val | Test | Δ vs previous |
-|-----|-----|------|--------------|
-| 0.05 (no guard) | 58.7% | 47.2% | — |
-| 0.05 (with guard) | 58.7% | 49.5% | +2.3pp |
-| 0.15 | 62.1% | 52.6% | +3.1pp |
-| 0.25 | 62.5% | 53.2% | +0.6pp ← peak |
-| 0.35 | 58.3% | 52.5% | -0.7pp (over-pruning) |
+```bash
+csc-workspaces
+```
 
-**Full 9-subject results — 12b8c at different thresholds:**
+```bash
+DATASET=Cho2017 sbatch --time=03:00:00 roihu/00b_prepare_data.sh
+```
 
-| Subject | V4 (9b6c) | 12b8c mff=0.25 | 12b8c mff=0.15 |
-|---------|-----------|----------------|----------------|
-| S1 | 82.6% ±2.9 | 79.9% ±1.7 | 83.5% ±2.5 |
-| S2 | 44.7% ±5.3 | 44.4% ±4.0 | 46.5% ±3.4 |
-| S3 | 77.8% ±1.3 | 72.4% ±3.3 | 74.0% ±4.0 |
-| S4 | 63.5% ±4.1 | 62.4% ±2.1 | 65.8% ±4.1 |
-| S5 | 45.3% ±4.4 | 46.9% ±1.7 | 46.5% ±3.3 |
-| S6 | 54.3% ±1.9 | 52.5% ±1.3 | 53.1% ±3.8 |
-| S7 | 72.5% ±5.6 | 73.5% ±5.7 | 74.0% ±2.6 |
-| S8 | 80.3% ±3.1 | 78.7% ±3.5 | 76.9% ±1.2 |
-| S9 | 80.7% ±1.5 | 81.0% ±1.8 | 81.7% ±2.0 |
-| **Mean** | **66.9% ±14.5** | **65.8% ±13.8** | **66.9% ±13.8** |
+Cho2017 is 52 subjects at 64 channels against BNCI2015-001's 12 at 13, so
+roughly 20x the volume. The job prints `df` before and `du -sh` after —
+that is the one quantity that has not been measured.
 
-**Conclusion:** 12b8c mff=0.15 ties V4 on grand mean (66.9%) but wins on stability —
-lower std for 6/9 subjects (notably S7: ±5.6→±2.6, S2: ±5.3→±3.4). More consistent
-cross-fold behaviour makes it the better configuration for publication.
-**Selected as V4.1.**
+### 12. Cho2017 pilot
 
----
+```bash
+DATASET=Cho2017 sbatch --array=1-3 --time=12:00:00 roihu/01_train_array.sh
+```
 
-## V4.1 — 12 adaptive bands + 8 CSP components + min_fisher_fraction=0.15
+```bash
+seff <jobid>_1
+```
 
-**Tag:** `v4.1`
+The ~13,000 BU estimate for the full run is reasoning, not measurement. The
+SNN cost should barely change (features stay at `2m*K = 48` regardless of
+channel count); what grows is the Riemannian mean, 13x13 -> 64x64, once per
+fold. Three subjects turn the estimate into a number.
 
-**Changes vs V4:**
+### 13. Cho2017 full training
 
-| Parameter | V4 | V4.1 |
-|-----------|----|----|
-| n_adaptive_bands | 9 | 12 |
-| csp_components_per_band | 6 | 8 |
-| min_fisher_fraction | 0.05 | 0.15 |
-| Features pre-MIBIF | 324 | 432 |
-| Features post-MIBIF | 162 | 216 |
+```bash
+DATASET=Cho2017 sbatch --array=1-52 --time=12:00:00 roihu/01_train_array.sh
+```
 
-**Results:**
+### 14. Cho2017 quantisation sweep
 
-| Subject | Baseline | V3 | V4 | V4.1 | Δ vs V4 |
-|---------|----------|-----|-----|------|---------|
-| S1 | 85.3% | 81.4% | 82.6% | 83.5% | +0.9pp |
-| S2 | 45.4% | 41.1% | 44.7% | 46.5% | +1.8pp |
-| S3 | 73.8% | 75.6% | 77.8% | 74.0% | -3.8pp |
-| S4 | 54.3% | 61.2% | 63.5% | 65.8% | +2.3pp |
-| S5 | 44.4% | 40.6% | 45.3% | 46.5% | +1.2pp |
-| S6 | 51.7% | 52.8% | 54.3% | 53.1% | -1.2pp |
-| S7 | 76.6% | 67.7% | 72.5% | 74.0% | +1.5pp |
-| S8 | 79.6% | 77.5% | 80.3% | 76.9% | -3.4pp |
-| S9 | 72.4% | 77.3% | 80.7% | 81.7% | +1.0pp |
-| **Mean** | **64.8%** | **63.9%** | **66.9%** | **66.9%** | **0.0pp** |
-| **Std** | — | — | **±14.5** | **±13.8** | **-0.7pp** |
+```bash
+DATASET=Cho2017 sbatch --time=12:00:00 roihu/02_quant_sweep.sh
+```
 
-**Why V4.1 over V4:** Same grand mean but lower cross-fold variance.
-For publication, lower std indicates more reproducible results.
+Scientifically the most important reason to run Cho2017: EA scales as
+`n_ch^2` while CSP scales as `n_ch`, so at 64 channels EA is ~8x the CSP
+block rather than ~1.6x. If the 4-bit collapse is caused by whitener dynamic
+range, it should be sharper there — and 52 subjects make the claim far harder
+to dismiss than 12.
 
 ---
 
-## Summary table
+## Deliberately not running
 
-| Version | Bands | CSP/band | mff | Features (post-MIBIF) | Grand Mean | Std | vs Baseline |
-|---------|-------|----------|-----|-----------------------|-----------|-----|-------------|
-| Baseline | 3 (static) | ~7 | — | — | 64.8% | — | — |
-| V3 | 6 | 4 | 0.05 | 72 | 63.9% | ±15.0 | -0.9pp |
-| V4 | 9 | 6 | 0.05 | 162 | 66.9% | ±14.5 | +2.1pp |
-| **V4.1** | **12** | **8** | **0.15** | **216** | **66.9%** | **±13.8** | **+2.1pp** |
+- **Hardware-noise Monte Carlo** — 4-class, expensive, and largely superseded
+  by the quantisation sweep.
+- **ANN twin** — honest but costly in space, and in a binary-only paper
+  ANN+CE already beats the SNN on both datasets.
+- **Ablation studies** — excluded by decision; the per-group sweep already
+  serves that role.
 
-**Target:** 70.0% grand mean FP32.
-**Current best:** V4.1 at 66.9% ±13.8 (+2.1pp vs baseline).
-**Next:** V5 — Batch Normalisation (training regulariser, folded at deployment).
+## Open questions for the paper
+
+- Cho2017's numbers come from the earlier V100 runs while BNCI2015-001 is from
+  GH200. Defensible (LDA/SVM reproduce exactly) but must be stated in the
+  setup section rather than left implicit.
+- The SVM hyperparameter grid is not stated; the artifacts record
+  `svm_best_c` and `svm_best_gamma`.
+- The introduction claims an analog front end with no ADC, while the bit sweep
+  is a **digital** implementation study. The honest framing: the pipeline's
+  structure is analog-mappable, and the sweep bounds what a digital
+  realisation costs. This needs saying explicitly in the intro.
