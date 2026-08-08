@@ -90,6 +90,15 @@ datasets. SynOps then come from this codebase's own per-fold instrumentation
 (`mean_input_events_per_trial * n_hidden + mean_hidden_events_per_trial *
 n_output`), measured during training.
 
+Lava is confirmed unavailable on Roihu (checked 9 Aug 2026): no `lava`
+module, and the `.venv_lava` referenced in `fbcsp_snn/lava_model.py` is a
+Puhti x86 environment that does not exist there -- and could not be imported
+on aarch64 GPU nodes if it did. Not worth installing before the deadline:
+`lava-dl` wheel availability on ARM is uncertain, and it would only provide
+a second measurement of a spike count we already record. Consequence for the
+paper: the binary energy figure rests on one measurement, where the 4-class
+figure had two agreeing ones. State that in the methods.
+
 `--n-channels` matters: the front-end stages scale with recording geometry,
 and the defaults describe BNCI2014-001 (22 ch). Everything else -- samples,
 window length, band count, class pairs -- is read from
