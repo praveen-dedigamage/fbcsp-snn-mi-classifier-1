@@ -147,7 +147,7 @@ class SNNClassifier(nn.Module):
         population_per_class: int = 20,
         beta: float = 0.95,
         dropout_prob: float = 0.5,
-        fast_lif: bool = True,
+        fast_lif: bool = False,
     ) -> None:
         super().__init__()
 
@@ -158,8 +158,14 @@ class SNNClassifier(nn.Module):
         self.n_output = n_classes * population_per_class
 
         # fast_lif swaps snntorch.Leaky for the fused step in this module.
-        # Verified bit-identical (forward, loss AND gradients) while running
-        # ~1.9x faster end-to-end; set False to fall back to snnTorch.
+        # OFF by default: it is ~1.3x faster and verified equivalent to float32
+        # epsilon (forward, loss and fc2 gradients bit-identical; fc1 gradients
+        # agree to 1.4e-07 relative), but "equivalent to 1.4e-07" is not the
+        # same as "unchanged", and every published result so far was produced
+        # with snnTorch. The far larger speedup (2.5x, from running a subject's
+        # folds concurrently on one GPU) costs no change to the computation at
+        # all, so this is not a trade worth making by default.
+        # Enable deliberately, and only for runs that are self-consistent.
         self.fast_lif = fast_lif
         self.beta_val = beta
 
