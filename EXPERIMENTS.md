@@ -135,7 +135,34 @@ Required before any comparative accuracy claim: the 72.1 -> 74.7 shift moves
 every paired comparison, and the SNN-vs-LDA gap narrowed from 4.6 to 2.0
 points, which may no longer be significant.
 
-### 8. EA/CSP fusion
+### 8. EA/CSP fusion — **pilot done (S1-S3, 15 folds), full run pending**
+
+Result on the three strongest subjects (FP32 mean 93.8):
+
+| Bits | Split | Fused | Delta |
+|---|---|---|---|
+| 4 | 57.1 | **75.2** | **+18.2** |
+| 6 | 92.3 | 93.4 | +1.0 |
+| 8 | 93.5 | 93.7 | +0.2 |
+| 16 | 93.8 | 93.8 | +0.0 |
+| 32 / FP32 | 93.8 | 93.8 | 0.0 |
+
+`identity_holds: true` (max rel err 4.2e-07), so FP32 parity is exactness,
+not coincidence. Storage 1638 -> 624 values per fold (**2.625x**, matching
+`1 + n_ch/(P*2m)`).
+
+Mechanism, from the measured dynamic ranges (max / 1st percentile):
+EA **48,625x**, CSP 6,504x, fused **3,232x**. Four bits give 15 positive
+levels; a 48,625x spread cannot be represented, and everything below
+`max/15` rounds to zero -- which is why `ea@4bit` alone went to chance. The
+fused matrix is 15x narrower than the whitener and narrower even than the
+CSP filters, because the whitener's amplification of low-variance directions
+is partly cancelled by filters selecting high-variance ones.
+
+Two qualifications: fusion converts a *collapse* into a *degradation* (75.2
+vs 93.8 FP32), it does not make 4 bits free; and S1-S3 are the strongest
+subjects, so the 12-subject mean delta will be smaller -- subjects near
+chance have nothing to recover.
 
 ```bash
 python fusion_experiment.py --results-dir Results_bnci2015 --subjects 1 2 3 4 5 6 7 8 9 10 11 12 --n-folds 5 --output-dir Results_fusion
