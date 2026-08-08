@@ -1,18 +1,28 @@
 #!/bin/bash
 # ============================================================================
-#  Roihu setup — run ONCE, interactively, on the GPU login node.
+#  Roihu setup, part 1 — LOGIN NODE (light work only)
 #
-#      ssh <user>@roihu-gpu.csc.fi
+#      ssh <user>@roihu-gpu.csc.fi        (or the web terminal)
 #      bash roihu/00_setup_roihu.sh
 #
-#  IMPORTANT — architecture split (CSC docs, "Getting started with Roihu"):
-#    Roihu GPU nodes are NVIDIA GH200 Grace Hopper: the CPU side is ARM
-#    (aarch64), not x86.  CSC states plainly that software compiled on GPU
-#    nodes only works on GPU nodes, "and this also applies to Python
-#    environments".  So:
-#      * build this environment on roihu-gpu.csc.fi, NOT roihu-cpu.csc.fi
-#      * any x86 wheels (including a venv copied from a laptop) will NOT run
-#    Verify with:  uname -m   ->  expect aarch64
+#  CSC's usage policy limits login nodes to "one-core jobs that finish in
+#  minutes and require less than 1 GiB of memory at maximum", and states that
+#  programs breaking that "will be terminated without warning". Everything
+#  here stays inside that budget:
+#
+#      arch check        trivial
+#      module load       trivial
+#      pip install       explicitly permitted login-node work
+#
+#  The dataset download and epoching is NOT done here -- it exceeds 1 GiB and
+#  takes longer than a couple of minutes. It runs as a batch job instead:
+#      sbatch roihu/00b_prepare_data.sh
+#
+#  IMPORTANT — architecture split:
+#  Roihu GPU nodes are GH200 Grace Hopper, so their CPU side is ARM (aarch64).
+#  CSC states software built on GPU nodes only works on GPU nodes, "and this
+#  also applies to Python environments". Build here, on roihu-gpu, never on
+#  roihu-cpu, and never copy an x86 environment in.
 # ============================================================================
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -22,73 +32,43 @@ ARCH="$(uname -m)"
 echo "uname -m = ${ARCH}"
 if [[ "${ARCH}" != "aarch64" ]]; then
     echo "!! Expected aarch64 (Roihu GPU login node)."
-    echo "!! You appear to be on ${ARCH} — probably roihu-cpu.csc.fi."
-    echo "!! Reconnect to roihu-gpu.csc.fi and re-run, or the env will not"
-    echo "!! work inside GPU jobs."
+    echo "!! You appear to be on ${ARCH} -- probably roihu-cpu.csc.fi."
+    echo "!! Reconnect to roihu-gpu.csc.fi and re-run, or the environment will"
+    echo "!! not work inside GPU jobs."
     exit 1
 fi
 
-# ---------------------------------------------------------------------------
-# 1. PyTorch module
-# ---------------------------------------------------------------------------
-# NOT hard-coded on purpose: the exact module name/version on Roihu must be
-# discovered on the system rather than guessed.  Run
-#     module spider python-pytorch
-# and set PYTORCH_MODULE below to what it reports.
+# Verified on roihu-gpu via `module spider python-pytorch` (Aug 2026).
 PYTORCH_MODULE="${PYTORCH_MODULE:-python-pytorch/2.10}"
 
 echo
-echo "=== available pytorch modules ==="
-module spider python-pytorch 2>&1 | head -30 || true
-echo
-echo "Loading: ${PYTORCH_MODULE}"
+echo "=== loading ${PYTORCH_MODULE} ==="
 module purge
 module load "${PYTORCH_MODULE}"
 
+# Deliberately does NOT call torch.cuda.is_available(): login nodes generally
+# expose no GPU, so a False here would be meaningless and alarming. CUDA is
+# verified on an actual GPU node by roihu/preflight.sh.
 python -c "
 import torch, platform
-print('machine      :', platform.machine())
-print('torch        :', torch.__version__)
-print('cuda avail   :', torch.cuda.is_available())
-print('device       :', torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'n/a')
+print('machine :', platform.machine(), '(expect aarch64)')
+print('torch   :', torch.__version__)
 "
 
-# ---------------------------------------------------------------------------
-# 2. Project Python deps not in the module
-# ---------------------------------------------------------------------------
-# snntorch / moabb / mne are usually not part of CSC's pytorch module.
-# --user installs into ~/.local, which is arch-specific: because this runs on
-# the ARM GPU login node, the result is only valid for GPU jobs.  If you also
-# need CPU-node runs, build a separate env there.
 echo
 echo "=== installing project deps (snntorch, moabb, mne) ==="
-pip install --user snntorch moabb mne
-
-# ---------------------------------------------------------------------------
-# 3. Pre-download the dataset ONCE
-# ---------------------------------------------------------------------------
-# 60 array tasks starting simultaneously would otherwise all try to download
-# BNCI2015-001 into the same ~/mne_data cache and race each other.  Fetch it
-# here, serially, before any job is submitted.
-echo
-echo "=== pre-downloading BNCI2015_001 (all 12 subjects) ==="
-python - <<'PY'
-import warnings, logging
-warnings.filterwarnings("ignore")
-for n in ("moabb", "mne"):
-    logging.getLogger(n).setLevel(logging.ERROR)
-from fbcsp_snn.config import Config
-from fbcsp_snn.pipeline import _load_raw
-
-for sid in range(1, 13):
-    cfg = Config()
-    cfg.source = "moabb"; cfg.moabb_dataset = "BNCI2015_001"
-    cfg.subject_id = sid; cfg.n_classes = 2
-    Xtr, ytr, Xte, yte = _load_raw(cfg)
-    print(f"  S{sid:<3} train {Xtr.shape}  test {Xte.shape}", flush=True)
-print("dataset cached under ~/mne_data")
-PY
+# --user installs into ~/.local, which is architecture-specific. Because this
+# runs on the ARM GPU login node, the result is valid for GPU jobs only.
+pip install --user --quiet snntorch moabb mne
+python -c "
+import snntorch, moabb, mne
+print('snntorch:', snntorch.__version__)
+print('moabb   :', moabb.__version__)
+print('mne     :', mne.__version__)
+"
 
 echo
-echo "=== setup complete ==="
-echo "Next:  sbatch roihu/01_train_array.sh   (edit --account first)"
+echo "=== part 1 complete ==="
+echo "Next, as a BATCH job (not on this login node):"
+echo "    sbatch roihu/00b_prepare_data.sh     # downloads + epochs all 12 subjects"
+echo "    sbatch roihu/preflight.sh            # 15-min environment check"

@@ -79,22 +79,43 @@ sed -i 's/project_XXXXXXX/project_2001234/' roihu/*.sh    # <- your real ID
 
 ---
 
-## 4. One-time setup (interactive, on the login node)
+## 4. One-time setup
+
+CSC limits login nodes to "one-core jobs that finish in minutes and require
+less than 1 GiB of memory", enforced by terminating offenders without warning.
+Setup is therefore split in two.
+
+**4a — login node (light: module load + pip install only)**
 
 ```bash
 bash roihu/00_setup_roihu.sh
 ```
 
-This will:
-- **abort** unless `uname -m` is `aarch64` (guards the x86/ARM trap)
-- load the PyTorch module and print torch / CUDA / device
-- `pip install --user snntorch moabb mne`
-- **pre-download all 12 subjects serially**
+Aborts unless `uname -m` is `aarch64`, loads `python-pytorch/2.10`, and
+installs `snntorch` / `moabb` / `mne` into `~/.local`. It deliberately does
+*not* call `torch.cuda.is_available()` -- login nodes expose no GPU, so a
+`False` there would be meaningless. CUDA is checked on a real GPU node by the
+preflight job.
 
-That last step matters: without it, parallel tasks would all try to populate
-the same `~/mne_data` cache simultaneously and race each other.
+**4b — batch job (dataset download + epoching)**
 
----
+```bash
+sbatch roihu/00b_prepare_data.sh
+```
+
+This looks like "just a download", but MOABB also epochs the data (12 subjects
+x 400 trials x 13 ch x 2561 samples) -- far past the login-node budget, so it
+runs as a job. It also has to happen *before* the training array: 5 concurrent
+folds per subject would otherwise race to populate the same `~/mne_data`
+cache.
+
+It runs on `gputest` rather than a CPU partition for a non-obvious reason: the
+environment was installed on the **ARM** GPU login node, so it is aarch64 and
+cannot be imported on Roihu's x86 CPU nodes.
+
+> If this job fails with a DNS/network error, compute nodes have no outbound
+> internet. Fall back to fetching on the login node with `--download-only`,
+> which skips the expensive epoching and stays within the login-node budget.
 
 ## 5. Preflight (15 minutes, cheap)
 
