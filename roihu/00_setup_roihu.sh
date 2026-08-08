@@ -33,13 +33,13 @@ fi
 # ---------------------------------------------------------------------------
 # NOT hard-coded on purpose: the exact module name/version on Roihu must be
 # discovered on the system rather than guessed.  Run
-#     module spider pytorch
+#     module spider python-pytorch
 # and set PYTORCH_MODULE below to what it reports.
-PYTORCH_MODULE="${PYTORCH_MODULE:-pytorch}"
+PYTORCH_MODULE="${PYTORCH_MODULE:-python-pytorch/2.10}"
 
 echo
 echo "=== available pytorch modules ==="
-module spider pytorch 2>&1 | head -30 || true
+module spider python-pytorch 2>&1 | head -30 || true
 echo
 echo "Loading: ${PYTORCH_MODULE}"
 module purge

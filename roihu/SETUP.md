@@ -57,13 +57,13 @@ Deliberately **not** hard-coded in the scripts — it must come from the system,
 not from a guess.
 
 ```bash
-module spider pytorch
+module spider python-pytorch
 ```
 
 Note the exact name/version it reports, then export it for every later step:
 
 ```bash
-export PYTORCH_MODULE=pytorch/<version-it-showed>
+export PYTORCH_MODULE=python-pytorch/2.10
 ```
 
 ---

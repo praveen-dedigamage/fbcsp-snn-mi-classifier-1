@@ -36,7 +36,7 @@ OUT_DIR="${OUT_DIR:-Results_quant}"
 SUBJECTS="${SUBJECTS:-1 2 3 4 5 6 7 8 9 10 11 12}"
 N_FOLDS=5
 BITS="4 6 8 16 32"
-PYTORCH_MODULE="${PYTORCH_MODULE:-pytorch}"
+PYTORCH_MODULE="${PYTORCH_MODULE:-python-pytorch/2.10}"
 
 module purge
 module load "${PYTORCH_MODULE}"

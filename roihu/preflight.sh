@@ -23,7 +23,7 @@ set -euo pipefail
 cd "${SLURM_SUBMIT_DIR}"
 mkdir -p logs
 
-PYTORCH_MODULE="${PYTORCH_MODULE:-pytorch}"
+PYTORCH_MODULE="${PYTORCH_MODULE:-python-pytorch/2.10}"
 module purge
 module load "${PYTORCH_MODULE}"
 

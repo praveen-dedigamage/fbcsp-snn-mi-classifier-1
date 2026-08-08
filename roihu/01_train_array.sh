@@ -46,7 +46,7 @@ DATASET="BNCI2015_001"
 RESULTS_DIR="${RESULTS_DIR:-Results_bnci2015}"
 N_FOLDS=5
 SEED=42
-PYTORCH_MODULE="${PYTORCH_MODULE:-pytorch}"   # set from `module spider pytorch`
+PYTORCH_MODULE="${PYTORCH_MODULE:-python-pytorch/2.10}"   # from `module spider python-pytorch`
 
 SUBJECT_ID=${SLURM_ARRAY_TASK_ID}
 
