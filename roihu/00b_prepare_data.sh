@@ -29,7 +29,11 @@
 #  stays within the login-node budget.
 # ============================================================================
 #SBATCH --job-name=fbcsp_prepdata
-#SBATCH --account=project_XXXXXXX          # <-- EDIT: your CSC project
+# Account comes from SBATCH_ACCOUNT in the environment; add
+#     export SBATCH_ACCOUNT=project_XXXXXXX
+# to ~/.bashrc. Deliberately not an #SBATCH line: a committed
+# project id has to be re-substituted after every pull, and that
+# conflicted on four separate occasions.
 # gpumedium, not gputest: gputest caps at 15 minutes, which suits
 # BNCI2015-001 (12 subjects at 13 channels, ~2.5 min) but not Cho2017
 # (52 subjects at 64 channels, hours). Override --time at submit time.

@@ -17,7 +17,11 @@
 #  since filter coefficients are deliberately excluded from the sweep.
 # ============================================================================
 #SBATCH --job-name=fbcsp_snn_quant
-#SBATCH --account=project_XXXXXXX          # <-- EDIT: your CSC project
+# Account comes from SBATCH_ACCOUNT in the environment; add
+#     export SBATCH_ACCOUNT=project_XXXXXXX
+# to ~/.bashrc. Deliberately not an #SBATCH line: a committed
+# project id has to be re-substituted after every pull, and that
+# conflicted on four separate occasions.
 #SBATCH --partition=gpumedium
 #SBATCH --gres=gpu:gh200:1
 #SBATCH --cpus-per-task=16

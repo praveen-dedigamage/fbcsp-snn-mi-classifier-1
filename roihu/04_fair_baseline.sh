@@ -27,7 +27,11 @@
 #          --subjects 1 2 3 4 5 6 7 8 9 10 11 12 --n-folds 5
 # ============================================================================
 #SBATCH --job-name=fbcsp_fair
-#SBATCH --account=project_XXXXXXX          # <-- EDIT: your CSC project
+# Account comes from SBATCH_ACCOUNT in the environment; add
+#     export SBATCH_ACCOUNT=project_XXXXXXX
+# to ~/.bashrc. Deliberately not an #SBATCH line: a committed
+# project id has to be re-substituted after every pull, and that
+# conflicted on four separate occasions.
 #SBATCH --partition=gpumedium
 #SBATCH --gres=gpu:gh200:1
 #SBATCH --cpus-per-task=16
