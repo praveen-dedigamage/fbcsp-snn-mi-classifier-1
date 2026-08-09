@@ -41,6 +41,15 @@ esac
 SUBJECTS="${SUBJECTS:-${_default_subjects}}"
 BITS="${BITS:-4 6 8 16 32}"
 
+# FUSE=1 composes the EA whitener into the spatial filters before quantising,
+# measuring a front end that stores one matrix per band instead of two. Exact
+# in FP32, so the reference is unchanged. Output CSVs gain a '_fused' suffix,
+# so a fused run cannot overwrite a split one.
+FUSE_FLAG=""
+if [ "${FUSE:-0}" = "1" ]; then
+    FUSE_FLAG="--fuse"
+fi
+
 module purge
 module load "${PYTORCH_MODULE}"
 
@@ -63,7 +72,7 @@ srun python -u quantize_sweep.py \
     --subjects ${SUBJECTS} \
     --n-folds "${N_FOLDS}" \
     --bits ${BITS} \
-    --mode uniform \
+    --mode uniform ${FUSE_FLAG} \
     --output-dir "${OUT_DIR}"
 
 # ---- per-group: which stage degrades first ---------------------------------
@@ -79,7 +88,7 @@ srun python -u quantize_sweep.py \
     --subjects ${SUBJECTS} \
     --n-folds "${N_FOLDS}" \
     --bits ${BITS} \
-    --mode per-group \
+    --mode per-group ${FUSE_FLAG} \
     --output-dir "${OUT_DIR}"
 
 echo "finished: $(date)"

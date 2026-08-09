@@ -74,10 +74,15 @@ from fbcsp_snn.ptq import (
     quantize_znorm,
 )
 from fbcsp_snn.training import evaluate_model
+from fusion_experiment import fuse_csp
 
 logger: logging.Logger = setup_logger(__name__)
 
 GROUPS: List[str] = ["ea", "csp", "znorm", "snn_w", "snn_b"]
+
+# With the whitener folded into the spatial filters there is no separately
+# stored EA matrix, so it is not a quantisable group.
+GROUPS_FUSED: List[str] = ["csp", "znorm", "snn_w", "snn_b"]
 
 
 # ---------------------------------------------------------------------------
@@ -93,6 +98,7 @@ def evaluate_fold_at_bits(
     n_classes: int,
     bits: Optional[int],
     groups: List[str],
+    fuse: bool = False,
 ) -> float:
     """Quantise the requested groups to *bits* and return test accuracy.
 
@@ -131,6 +137,14 @@ def evaluate_fold_at_bits(
     if mibif_path.exists():
         with open(mibif_path, "rb") as f:
             mibif = pickle.load(f)
+
+    # ---- optional front-end fusion --------------------------------------
+    # Compose the EA whitener into the spatial filters before quantising, so
+    # the measurement describes a pipeline that stores one matrix per band
+    # rather than two. The substitution is algebraically exact, so the FP32
+    # reference is unchanged; only the quantisation grid differs.
+    if fuse:
+        csp = fuse_csp(csp)
 
     # ---- front-end parameter quantisation -------------------------------
     if bits is not None:
@@ -194,6 +208,7 @@ def sweep_subject(
     n_folds: int,
     bit_list: List[int],
     mode: str,
+    fuse: bool = False,
 ) -> List[Dict]:
     """Run the bit-width sweep for one subject, returning one row per (fold, condition)."""
     cfg.subject_id = subject_id
@@ -228,7 +243,8 @@ def sweep_subject(
 
         def _run(bits: Optional[int], groups: List[str], label: str) -> None:
             acc = evaluate_fold_at_bits(
-                fold_dir, X_bands, y_test_0, params, cfg, n_classes, bits, groups
+                fold_dir, X_bands, y_test_0, params, cfg, n_classes, bits, groups,
+                fuse=fuse,
             )
             rows.append({
                 "subject": subject_id, "fold": fold,
@@ -239,12 +255,13 @@ def sweep_subject(
 
         _run(None, [], "fp32_reference")
 
+        groups_all = GROUPS_FUSED if fuse else GROUPS
         if mode == "uniform":
             for b in bit_list:
-                _run(b, GROUPS, f"all@{b}bit")
+                _run(b, groups_all, f"all@{b}bit")
         else:  # per-group isolation
             for b in bit_list:
-                for g in GROUPS:
+                for g in groups_all:
                     _run(b, [g], f"{g}@{b}bit")
 
     return rows
@@ -263,6 +280,12 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--mode", choices=["uniform", "per-group"], default="uniform",
                    help="'uniform' quantises every group to the same width; "
                         "'per-group' isolates one group at a time.")
+    p.add_argument("--fuse", action="store_true",
+                   help="Compose the EA whitener into the spatial filters "
+                        "before quantising, so the measurement describes a "
+                        "front end that stores one matrix per band instead of "
+                        "two. Exact in FP32; there is then no separate 'ea' "
+                        "group. Output filenames gain a '_fused' suffix.")
     p.add_argument("--output-dir", default="Results_quant")
     return p.parse_args()
 
@@ -282,11 +305,14 @@ def main() -> None:
         args.moabb_dataset, args.mode, args.bits, args.subjects,
     )
     logger.info("Groups quantised: %s  (filter-bank coefficients excluded by design)",
-                ", ".join(GROUPS))
+                ", ".join(GROUPS_FUSED if args.fuse else GROUPS))
+    if args.fuse:
+        logger.info("Front end FUSED: storing R^-1/2 W per band, not both factors")
 
     all_rows: List[Dict] = []
     for sid in args.subjects:
-        all_rows.extend(sweep_subject(cfg, sid, args.n_folds, args.bits, args.mode))
+        all_rows.extend(sweep_subject(cfg, sid, args.n_folds, args.bits,
+                                      args.mode, fuse=args.fuse))
 
     if not all_rows:
         logger.error("No results produced — check --results-dir and --subjects")
@@ -294,7 +320,8 @@ def main() -> None:
 
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    csv_path = out_dir / f"quant_sweep_{args.moabb_dataset}_{args.mode}.csv"
+    _suffix = "_fused" if args.fuse else ""
+    csv_path = out_dir / f"quant_sweep_{args.moabb_dataset}_{args.mode}{_suffix}.csv"
     with open(csv_path, "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=list(all_rows[0].keys()))
         w.writeheader()
