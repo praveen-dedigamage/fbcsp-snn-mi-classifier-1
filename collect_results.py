@@ -274,11 +274,83 @@ def summarise_folds(records: List[Dict[str, Any]]) -> Dict[str, Any]:
     return {
         "per_subject": per_subject,
         "across_subjects": across,
+        "significance": paired_tests(per_subject),
         "note": (
             "across_subjects averages subject means (not raw folds); "
             "sd is sample sd (ddof=1) over subjects"
         ),
     }
+
+
+def paired_tests(per_subject: Dict[str, Any]) -> Dict[str, Any]:
+    """Paired comparisons between the SNN and each classical baseline.
+
+    Pairing is by subject, using each subject's mean over folds, because folds
+    within a subject are not independent observations -- they share the same
+    recording and differ only in which trials were held out for validation.
+    Treating 60 folds as 60 samples would inflate significance roughly
+    fivefold.
+
+    Reports both a paired t-test and a Wilcoxon signed-rank test: the t-test
+    assumes approximately normal differences, which 12 subjects cannot
+    establish, so the rank-based test is the safer of the two to quote when
+    they disagree.
+
+    Parameters
+    ----------
+    per_subject : dict
+        Output of :func:`summarise_folds`'s ``per_subject`` field.
+
+    Returns
+    -------
+    dict
+        One entry per comparison, or a note if SciPy is unavailable.
+    """
+    try:
+        from scipy import stats
+    except ImportError:  # pragma: no cover - depends on environment
+        return {
+            "note": "SciPy not available; run with the PyTorch module loaded "
+                    "(module load python-pytorch/2.10) to compute these."
+        }
+
+    subjects = sorted(per_subject, key=int)
+
+    def series(field: str) -> List[Optional[float]]:
+        return [per_subject[s][field]["mean"] for s in subjects]
+
+    out: Dict[str, Any] = {}
+    snn = series("test_acc_fp32")
+    for label, field in (("snn_vs_lda", "test_acc_lda"),
+                         ("snn_vs_svm", "test_acc_svm")):
+        other = series(field)
+        pairs = [(a, b) for a, b in zip(snn, other)
+                 if a is not None and b is not None]
+        if len(pairs) < 3:
+            out[label] = {"n": len(pairs), "note": "too few subjects to test"}
+            continue
+        a = [p[0] for p in pairs]
+        b = [p[1] for p in pairs]
+        diffs = [x - y for x, y in zip(a, b)]
+
+        t_p = float(stats.ttest_rel(a, b).pvalue)
+        # Wilcoxon is undefined when every difference is zero.
+        try:
+            w_p = float(stats.wilcoxon(a, b).pvalue)
+        except ValueError:
+            w_p = float("nan")
+
+        out[label] = {
+            "n_subjects": len(pairs),
+            "mean_difference": round(float(statistics.mean(diffs)), 4),
+            "snn_wins": sum(1 for d in diffs if d > 0),
+            "ties": sum(1 for d in diffs if d == 0),
+            "paired_t_p": t_p,
+            "wilcoxon_p": w_p,
+            "significant_at_0.05": bool(min(t_p, w_p) < 0.05)
+                                   if w_p == w_p else bool(t_p < 0.05),
+        }
+    return out
 
 
 def summarise_quant(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -478,6 +550,25 @@ def render_markdown(bundle: Dict[str, Any]) -> str:
         f"| **Mean** | | **{_fmt(a['test_acc_fp32'])}** | "
         f"**{_fmt(a['test_acc_lda'])}** | **{_fmt(a['test_acc_svm'])}** | |"
     )
+
+    sig = folds.get("significance", {})
+    if sig and "note" not in sig:
+        L += ["", "## Paired comparisons (by subject, SNN vs baseline)", "",
+              "| Comparison | n | Mean diff | SNN wins | paired t | Wilcoxon | p<0.05 |",
+              "|---|---|---|---|---|---|---|"]
+        for name, v in sig.items():
+            if "note" in v:
+                continue
+            L.append(
+                f"| {name.replace('_', ' ')} | {v['n_subjects']} | "
+                f"{v['mean_difference']:+.2f} | {v['snn_wins']}/{v['n_subjects']} | "
+                f"{v['paired_t_p']:.4f} | {v['wilcoxon_p']:.4f} | "
+                f"{'yes' if v['significant_at_0.05'] else 'no'} |"
+            )
+        L += ["", "Paired by subject, not by fold: folds within a subject share "
+                  "a recording and are not independent.", ""]
+    elif sig:
+        L += ["", f"_{sig['note']}_", ""]
 
     for mode, conds in bundle["summary"]["quantisation"].items():
         L += ["", f"## Quantisation sweep — {mode}", "",
