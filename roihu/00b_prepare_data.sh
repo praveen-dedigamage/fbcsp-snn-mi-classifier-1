@@ -30,11 +30,14 @@
 # ============================================================================
 #SBATCH --job-name=fbcsp_prepdata
 #SBATCH --account=project_XXXXXXX          # <-- EDIT: your CSC project
-#SBATCH --partition=gputest
+# gpumedium, not gputest: gputest caps at 15 minutes, which suits
+# BNCI2015-001 (12 subjects at 13 channels, ~2.5 min) but not Cho2017
+# (52 subjects at 64 channels, hours). Override --time at submit time.
+#SBATCH --partition=gpumedium
 #SBATCH --gres=gpu:gh200:1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
-#SBATCH --time=00:15:00
+#SBATCH --time=01:00:00
 #SBATCH --output=logs/prepdata_%j.out
 #SBATCH --error=logs/prepdata_%j.err
 

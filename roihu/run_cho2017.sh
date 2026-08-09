@@ -75,6 +75,11 @@ echo "============================================================"
 
 submit() {
     # submit <description> <sbatch args...>  -> echoes the job id
+    #
+    # Aborts the whole chain on failure. Without this an sbatch error yields
+    # an empty job id, every dependent submission then fails with "Job
+    # dependency problem", and the summary prints six blank ids as though
+    # something had been queued.
     local desc="$1"; shift
     if [ "${DRYRUN}" = "1" ]; then
         echo "DRYRUN  ${desc}:  sbatch $*" >&2
@@ -82,7 +87,12 @@ submit() {
         return
     fi
     local jid
-    jid="$(sbatch --parsable "$@")"
+    if ! jid="$(sbatch --parsable "$@")" || ! [[ "${jid}" =~ ^[0-9]+$ ]]; then
+        echo "" >&2
+        echo "!! ${desc} failed to submit; chain aborted, nothing queued." >&2
+        echo "!! sbatch args were: $*" >&2
+        exit 1
+    fi
     echo "submitted  ${desc}  -> ${jid}" >&2
     echo "${jid}"
 }
