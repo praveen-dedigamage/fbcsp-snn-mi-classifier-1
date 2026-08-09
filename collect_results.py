@@ -57,7 +57,15 @@ except ImportError:  # pragma: no cover - depends on environment
     logger = logging.getLogger(__name__)
 
 # Accuracy fields inside pipeline_params.json that are reported per subject.
-ACC_FIELDS = ("test_acc_fp32", "test_acc_lda", "test_acc_svm")
+ACC_FIELDS = (
+    "test_acc_fp32",
+    "test_acc_lda",
+    "test_acc_svm",
+    # Written by run_fair_baseline.py: the same classifiers refit on the full
+    # time series the spike encoder receives, rather than on log-variance.
+    "test_acc_lda_fullts",
+    "test_acc_svm_fullts",
+)
 
 
 # ---------------------------------------------------------------- provenance
@@ -162,6 +170,19 @@ def load_folds(results_dir: Path) -> Tuple[List[Dict[str, Any]], List[str]]:
             except (OSError, json.JSONDecodeError) as exc:
                 problems.append(f"S{subject} fold {fold}: unreadable ({exc})")
                 continue
+
+            # Fairness-controlled baselines live in a separate file, written
+            # by a later job. Merge them in when present so every accuracy for
+            # this fold travels together; absence is normal, not an error.
+            fair_path = fold_dir / "fair_baseline_results.json"
+            if fair_path.exists():
+                try:
+                    with open(fair_path, encoding="utf-8") as f:
+                        params.update(json.load(f))
+                except (OSError, json.JSONDecodeError) as exc:
+                    problems.append(
+                        f"S{subject} fold {fold}: fair_baseline unreadable ({exc})")
+
             records.append({"subject": subject, "fold": fold, **params})
 
     return records, problems
@@ -322,7 +343,9 @@ def paired_tests(per_subject: Dict[str, Any]) -> Dict[str, Any]:
     out: Dict[str, Any] = {}
     snn = series("test_acc_fp32")
     for label, field in (("snn_vs_lda", "test_acc_lda"),
-                         ("snn_vs_svm", "test_acc_svm")):
+                         ("snn_vs_svm", "test_acc_svm"),
+                         ("snn_vs_lda_fullts", "test_acc_lda_fullts"),
+                         ("snn_vs_svm_fullts", "test_acc_svm_fullts")):
         other = series(field)
         pairs = [(a, b) for a, b in zip(snn, other)
                  if a is not None and b is not None]
@@ -532,7 +555,11 @@ def render_markdown(bundle: Dict[str, Any]) -> str:
 
     folds = bundle["summary"]["training"]
     L += ["", "## Accuracy by subject (%, mean +/- sd over folds)", "",
-          "| Subject | Folds | SNN | LDA | SVM | Features |", "|---|---|---|---|---|---|"]
+          "Log-var: classical decoders on the conventional summary. "
+          "Full-ts: the same classifiers on the time series the SNN receives.",
+          "",
+          "| Subject | Folds | SNN | LDA | SVM | LDA full-ts | SVM full-ts | Features |",
+          "|---|---|---|---|---|---|---|---|"]
 
     def _fmt(d: Dict[str, Any]) -> str:
         if d.get("mean") is None:
@@ -543,12 +570,15 @@ def render_markdown(bundle: Dict[str, Any]) -> str:
         L.append(
             f"| {subject} | {e['n_folds']} | {_fmt(e['test_acc_fp32'])} | "
             f"{_fmt(e['test_acc_lda'])} | {_fmt(e['test_acc_svm'])} | "
+            f"{_fmt(e['test_acc_lda_fullts'])} | {_fmt(e['test_acc_svm_fullts'])} | "
             f"{_fmt(e['n_features_selected'])} |"
         )
     a = folds["across_subjects"]
     L.append(
         f"| **Mean** | | **{_fmt(a['test_acc_fp32'])}** | "
-        f"**{_fmt(a['test_acc_lda'])}** | **{_fmt(a['test_acc_svm'])}** | |"
+        f"**{_fmt(a['test_acc_lda'])}** | **{_fmt(a['test_acc_svm'])}** | "
+        f"**{_fmt(a['test_acc_lda_fullts'])}** | "
+        f"**{_fmt(a['test_acc_svm_fullts'])}** | |"
     )
 
     sig = folds.get("significance", {})
