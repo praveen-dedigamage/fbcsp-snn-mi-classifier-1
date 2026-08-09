@@ -41,8 +41,9 @@ mkdir -p logs
 source roihu/env.sh
 
 case "${DATASET}" in
-    Cho2017) _default_subjects="$(seq 1 52 | tr '\n' ' ')" ;;
-    *)       _default_subjects="1 2 3 4 5 6 7 8 9 10 11 12" ;;
+    Cho2017)      _default_subjects="$(seq 1 52 | tr '\n' ' ')" ;;
+    BNCI2014_002) _default_subjects="$(seq 1 14 | tr '\n' ' ')" ;;
+    *)            _default_subjects="1 2 3 4 5 6 7 8 9 10 11 12" ;;
 esac
 SUBJECTS="${SUBJECTS:-${_default_subjects}}"
 BITS="${BITS:-4 6 8 16 32}"

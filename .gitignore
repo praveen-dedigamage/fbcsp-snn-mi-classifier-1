@@ -27,14 +27,17 @@ ENV/
 # MOABB / MNE data downloads (large — fetch at runtime)
 C-/
 
-# Training artifacts — keep JSON/CSV/PNG, exclude large binaries
-Results/**/*.pt
-Results/**/*.pkl
+# Training artifacts — keep JSON/CSV/PNG, exclude large binaries.
+# Results*/ not Results/: runs land in Results_bnci2015, Results_cho2017,
+# Results_verify_Subject_1 and similar, and those held .pt files of 200-400 MB
+# that a `git add -A` would otherwise stage past GitHub's 100 MB limit.
+Results*/**/*.pt
+Results*/**/*.pkl
 
 # But keep the summary files and plots
-!Results/**/*.json
-!Results/**/*.csv
-!Results/**/*.png
+!Results*/**/*.json
+!Results*/**/*.csv
+!Results*/**/*.png
 
 # SLURM logs
 logs/

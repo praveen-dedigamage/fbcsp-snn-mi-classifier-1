@@ -75,6 +75,19 @@ DATASET_REGISTRY: Dict[str, Dict] = {
         # Single session → StratifiedShuffleSplit 80/20.
         # ~240 trials/class gives full-rank 128×128 covariances for CSP.
     },
+    "BNCI2014_002": {
+        "n_classes": 2,
+        "sfreq": 512,
+        "n_channels": 15,
+        "description": "BNCI 2014-002 (2-class MI, 14 subjects)",
+        "moabb_cls": "BNCI2014_002",
+        # MOABB reports a single session holding eight runs, but the dataset
+        # ships a designed split: S**T.mat is five training runs, S**E.mat is
+        # three evaluation runs, and the evaluation runs were recorded with
+        # feedback. A random 80/20 draw would mix the two and discard the
+        # authors' protocol, so split on run name instead.
+        "run_split": {"train": "train", "test": "test"},
+    },
     "BNCI2015_001": {
         "n_classes": 2,
         "sfreq": 512,
@@ -323,6 +336,29 @@ def load_moabb(
         y_int.shape,
         label_map,
     )
+
+    # Split by run when the dataset carries a designed train/evaluation
+    # protocol that MOABB flattens into one session (see BNCI2014_002).
+    run_split = info.get("run_split")
+    if run_split is not None and "run" in metadata.columns:
+        runs = metadata["run"].astype(str).values
+        train_mask = np.array([run_split["train"] in r for r in runs])
+        test_mask = np.array([run_split["test"] in r for r in runs])
+        overlap = int(np.sum(train_mask & test_mask))
+        if overlap or not train_mask.any() or not test_mask.any():
+            raise ValueError(
+                f"{dataset_name}: run_split {run_split} does not partition the "
+                f"runs cleanly (train={train_mask.sum()}, test={test_mask.sum()}, "
+                f"both={overlap}); runs seen: {sorted(set(runs))}"
+            )
+        X_train, y_train = X_all[train_mask], y_int[train_mask]
+        X_test, y_test = X_all[test_mask], y_int[test_mask]
+        logger.info(
+            "Run split (%s) — train: %s  test: %s  runs: %s",
+            run_split, X_train.shape, X_test.shape, sorted(set(runs)),
+        )
+        _log_split_summary(X_train, y_train, X_test, y_test)
+        return X_train, y_train, X_test, y_test
 
     # Split by session when session info is available
     if "session" in metadata.columns:

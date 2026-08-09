@@ -1,10 +1,11 @@
 #!/bin/bash
 # ============================================================================
-#  Cho2017 — submit the whole experiment chain in one shot
+#  Submit a whole dataset's experiment chain in one shot
 #
-#      bash roihu/run_cho2017.sh                  # full 52 subjects
-#      N_SUBJECTS=3 bash roihu/run_cho2017.sh     # pilot first (recommended)
-#      DRYRUN=1 bash roihu/run_cho2017.sh         # print the plan, submit nothing
+#      DATASET=Cho2017 N_SUBJECTS=52 bash roihu/run_chain.sh
+#      DATASET=BNCI2014_002 N_SUBJECTS=14 bash roihu/run_chain.sh
+#      N_SUBJECTS=3 ... bash roihu/run_chain.sh    # pilot first
+#      DRYRUN=1 ...   bash roihu/run_chain.sh      # print the plan only
 #
 #  This is a submission script, not a batch job: it runs on the login node and
 #  issues sbatch calls wired together with Slurm dependencies, so each stage
@@ -62,7 +63,7 @@ DRYRUN="${DRYRUN:-0}"
 mkdir -p logs
 
 echo "============================================================"
-echo "  Cho2017 experiment chain"
+echo "  ${DATASET} experiment chain"
 echo "    subjects   : ${N_SUBJECTS}  (array ${ARRAY})"
 echo "    account    : ${SBATCH_ACCOUNT:-<from script #SBATCH lines>}"
 echo "    wall times : prep ${T_PREP}  train ${T_TRAIN}  sweep ${T_SWEEP}"
