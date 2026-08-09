@@ -16,8 +16,24 @@
 _submit_dir="${SLURM_SUBMIT_DIR:-$(pwd)}"
 PROJECT_ROOT="${PROJECT_ROOT:-$(dirname "${_submit_dir}")}"
 
-export MNE_DATA="${MNE_DATA:-${PROJECT_ROOT}/mne_data}"
-mkdir -p "${MNE_DATA}"
+# Set unconditionally, not with ${MNE_DATA:-...}. sbatch exports the
+# submitting shell's environment by default, so a stale MNE_DATA inherited
+# from a login shell would otherwise win over the value intended here -- and
+# a job that silently reads the wrong cache path fails at the first subject
+# load, an hour after anything looked wrong.
+export MNE_DATA="${PROJECT_ROOT}/mne_data"
+
+# MOABB resolves the dataset-specific key FIRST and only falls back to
+# MNE_DATA, so setting MNE_DATA alone is not sufficient. MNE also persists
+# both keys to ~/.mne/mne-python.json on first download, and that file
+# outlives any directory move.
+export MNE_DATASETS_BNCI_PATH="${MNE_DATA}"
+
+if [ ! -d "${MNE_DATA}" ]; then
+    echo "!! MNE_DATA does not exist: ${MNE_DATA}"
+    echo "!! Run 'sbatch roihu/00b_prepare_data.sh' before any job that reads it."
+    exit 1
+fi
 
 # Verified on roihu-gpu via `module spider python-pytorch` (Aug 2026).
 PYTORCH_MODULE="${PYTORCH_MODULE:-python-pytorch/2.10}"
