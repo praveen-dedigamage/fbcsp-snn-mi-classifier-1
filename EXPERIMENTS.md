@@ -17,13 +17,13 @@ Working dir on Roihu: `/scratch/project_2003397/praveen/fbcsp`
 | 1 | BNCI2015-001 training, 12 subj x 5 folds | **DONE** | ~1,800 BU | — |
 | 2 | Uniform (whole-pipeline) quantisation sweep, B15 | **DONE** | in job 525714 | — |
 | 3 | Per-group quantisation sweep, B15 | **DONE** | in job 525714 | — |
-| 4 | Collect evidence bundle | TODO | free | needs 3 |
-| 5 | Binary energy estimate | TODO | free | — |
-| 6 | Cross-subject summary table | TODO | free | — |
-| 7 | Paired significance tests | TODO (needs code) | free | needs 4 |
-| 8 | EA/CSP fusion experiment | TODO (needs code) | ~1 short job | — |
-| 9 | Fair-baseline control, B15 | TODO (needs Roihu wrapper) | moderate | — |
-| 10 | Move MOABB cache to scratch | TODO | free | needs 3 |
+| 4 | Collect evidence bundle | **DONE** | free | — |
+| 5 | Binary energy estimate | **DONE** | free | — |
+| 6 | Cross-subject summary table | superseded by 4 | free | — |
+| 7 | Paired significance tests | TODO (needs code) | free | — |
+| 8 | EA/CSP fusion experiment | **DONE** | ~290 BU (2 failed runs) | — |
+| 9 | Fair-baseline control, B15 | script ready, not run | moderate | — |
+| 10 | Move MOABB cache to scratch | **DONE** | free | — |
 | 11 | Cho2017 data prep | TODO | ~1 job | needs 10 |
 | 12 | Cho2017 pilot (3 subjects) | TODO | ~800 BU | needs 11 |
 | 13 | Cho2017 full training (52 subjects) | TODO | ~13,000 BU (est.) | needs 12 |
@@ -76,8 +76,13 @@ first assumed -- they are few, so a per-tensor scale is coarse relative to
 their spread, and a bias error displaces membrane potential directly against
 a fixed threshold. And the losses **do not accumulate**: individually they sum
 to -36.7, but quantising all groups together costs only -20.8, close to EA's
-own -19.1. The collapse is dominated by one stage rather than distributed,
-which is why fusing EA away recovers most of it.
+own -19.1. The collapse is dominated by one stage rather than distributed.
+
+That made fusion look like it should recover nearly all of the loss. It does
+not (see 8): removing EA as a separately quantised stage recovers only a
+third. So the whitener's *stored representation* is not the whole of its
+contribution -- the conditioning it imposes on the signal reaching CSP
+matters too, and that survives fusion.
 
 All 7 integrity checks pass over 1920 sweep rows, including
 `all@32bit == fp32_reference` exactly.
