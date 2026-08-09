@@ -156,61 +156,38 @@ Required before any comparative accuracy claim: the 72.1 -> 74.7 shift moves
 every paired comparison, and the SNN-vs-LDA gap narrowed from 4.6 to 2.0
 points, which may no longer be significant.
 
-### 8. EA/CSP fusion — **pilot done (S1-S3, 15 folds), full run pending**
-
-Result on the three strongest subjects (FP32 mean 93.8):
+### 8. EA/CSP fusion — **DONE (12 subjects, 60 folds)**
 
 | Bits | Split | Fused | Delta |
 |---|---|---|---|
-| 4 | 57.1 | **75.2** | **+18.2** |
-| 6 | 92.3 | 93.4 | +1.0 |
-| 8 | 93.5 | 93.7 | +0.2 |
-| 16 | 93.8 | 93.8 | +0.0 |
-| 32 / FP32 | 93.8 | 93.8 | 0.0 |
+| 4 | 54.2 | 61.0 | **+6.8** |
+| 6 | 73.5 | 74.0 | +0.5 |
+| 8 | 74.9 | 74.6 | -0.3 |
+| 16 | 74.7 | 74.8 | +0.1 |
+| 32 / FP32 | 74.7 | 74.7 | 0.0 |
 
-`identity_holds: true` (max rel err 4.2e-07), so FP32 parity is exactness,
-not coincidence. Storage 1638 -> 624 values per fold (**2.625x**, matching
-`1 + n_ch/(P*2m)`).
+`identity_holds: true` (4.2e-07) across all 60 folds. Storage 1638 -> 624
+values per fold (**2.625x**). Dynamic range: EA 48,625x, CSP 6,504x,
+fused 3,232x.
 
-Mechanism, from the measured dynamic ranges (max / 1st percentile):
-EA **48,625x**, CSP 6,504x, fused **3,232x**. Four bits give 15 positive
-levels; a 48,625x spread cannot be represented, and everything below
-`max/15` rounds to zero -- which is why `ea@4bit` alone went to chance. The
-fused matrix is 15x narrower than the whitener and narrower even than the
-CSP filters, because the whitener's amplification of low-variance directions
-is partly cancelled by filters selecting high-variance ones.
+**The pilot overstated the accuracy effect.** S1-S3 gave +18.2 at 4 bits; all
+12 subjects give **+6.8**, because subjects near chance have nothing to
+recover. Fusion mitigates the four-bit failure rather than removing it:
+61.0 vs 74.7 FP32 is still a 13.7-point loss, about two thirds of the
+original 20.5. At 8 bits it is marginally negative (-0.3, within noise), so
+it helps only where precision is genuinely scarce.
 
-Two qualifications: fusion converts a *collapse* into a *degradation* (75.2
-vs 93.8 FP32), it does not make 4 bits free; and S1-S3 are the strongest
-subjects, so the 12-subject mean delta will be smaller -- subjects near
-chance have nothing to recover.
+What is unconditional is the **storage reduction**: exact, independent of
+bit-width and subject, and growing with electrode count
+(`1 + n_ch/(P*2m)` predicts 9x at Cho2017's 64 channels).
+
+NOTE: this experiment quantises the **front end only** (EA + CSP), so its
+split column (54.2 at 4 bits) is not the same measurement as the uniform
+sweep (53.9, all five groups). Do not put them in one table.
 
 ```bash
 python fusion_experiment.py --results-dir Results_bnci2015 --subjects 1 2 3 4 5 6 7 8 9 10 11 12 --n-folds 5 --output-dir Results_fusion
 ```
-
-Writes `Results_fusion/fusion_BNCI2015_001.{csv,json}`. Needs a GPU (it
-re-runs the encoder and classifier), so submit it rather than running on the
-login node. Start with `--subjects 1 2 3` to check the FP32 identity holds
-before committing to all 12.
-
-Reports four things: whether the fusion is exact in FP32 (it must be --
-`max_projection_rel_err` below 1e-6, else the assumed transform order is
-wrong), the front-end storage reduction, the dynamic range of each matrix
-set, and split-vs-fused accuracy at every bit-width.
-
-EA and CSP are consecutive linear maps: `Y = W^T (R^-1/2 X)`, and `R^-1/2` is
-symmetric, so `W_eff = R^-1/2 W` can be precomputed once.
-
-Two predictions, both testable on saved artifacts with no retraining:
-
-- storage per band falls from `n_ch^2 + n_ch*2m` to `n_ch*2m` — at Cho2017's
-  64 channels, 4,608 -> 512 values, a **9x** front-end reduction
-- the 4-bit collapse disappears, since the wide-dynamic-range whitener
-  (built from `eigenvalue^-0.5`) is no longer quantised separately
-
-Highest value per unit of compute of anything on this list: it converts
-"EA is fragile" into a design fix.
 
 ### 9. Fair-baseline control (B15) — **needs Roihu wrapper**
 
