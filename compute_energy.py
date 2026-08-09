@@ -554,6 +554,10 @@ def _write_csv(rows: List[Dict], output_dir: Path) -> None:
 
 def _parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Item 9: Loihi 2 energy estimation.")
+    p.add_argument("--sfreq", type=float, default=None,
+                   help="Sampling rate in Hz. The artifacts do not record it, "
+                        "and every time-proportional front-end term scales "
+                        "with it. Overrides the built-in per-dataset table.")
     p.add_argument("--n-channels", type=int, default=N_EEG_CHANNELS,
                    help="EEG channels; sets the Gm-C filter count and the "
                         "analog encoder term. 22 for BNCI2014-001 (default), "
@@ -651,8 +655,25 @@ def main() -> None:
             geom["n_samples"] = int(p.get("n_timesteps", N_SAMPLES))
             geom["n_class_pairs"] = n_cls * (n_cls - 1) // 2
             geom["n_bands"] = len(p.get("bands", [])) or 6
-            sfreq = {"BNCI2015_001": 512.0, "Cho2017": 512.0,
-                     "BNCI2014_001": 250.0}.get(p.get("dataset"), 250.0)
+            # Sampling rate is not recorded in the artifacts, so it comes from
+            # --sfreq or this table. Falling back to a default silently is how
+            # BNCI2014-002 was first costed at 251 Hz instead of 512, doubling
+            # every time-proportional term; an unknown dataset now warns.
+            _SFREQ = {"BNCI2015_001": 512.0, "Cho2017": 512.0,
+                      "BNCI2014_002": 512.0, "BNCI2014_001": 250.0,
+                      "Schirrmeister2017": 500.0, "PhysionetMI": 160.0}
+            ds_name = p.get("dataset")
+            if args.sfreq is not None:
+                sfreq = float(args.sfreq)
+            elif ds_name in _SFREQ:
+                sfreq = _SFREQ[ds_name]
+            else:
+                sfreq = 250.0
+                logger.warning(
+                    "No sampling rate known for dataset %r; assuming %.0f Hz. "
+                    "Every time-proportional energy term scales with this -- "
+                    "pass --sfreq to set it explicitly.", ds_name, sfreq,
+                )
             geom["trial_s"] = geom["n_samples"] / sfreq
             logger.info(
                 "Front-end geometry from artifacts: %d samples, %.1f s, "
