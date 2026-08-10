@@ -1,5 +1,9 @@
+# Tested on torch 2.10.0+cu130 (CSC Roihu module python-pytorch/2.10).
 torch>=2.0
-snntorch>=0.9
+# Pinned, not a range: snnTorch changed surrogate-gradient internals and
+# init_leaky() behaviour across releases, so >=0.9 admits versions that do not
+# reproduce the published numbers. 1.0.0 is what every reported run used.
+snntorch==1.0.0
 scipy>=1.10
 scikit-learn>=1.3
 moabb>=1.1
