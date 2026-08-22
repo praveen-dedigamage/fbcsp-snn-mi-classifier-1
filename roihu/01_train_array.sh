@@ -79,7 +79,7 @@ for FOLD_IDX in $(seq 0 $(( N_FOLDS - 1 ))); do
         --subject-id "${SUBJECT_ID}" \
         --fold "${FOLD_IDX}" \
         --n-folds "${N_FOLDS}" \
-        --freq-bands "[(4,8),(8,14),(12,18),(16,24),(20,30),(26,40)]" \
+        --freq-bands "${FREQ_BANDS}" \
         --csp-components-per-band 8 \
         --hidden-neurons 64 \
         --population-per-class 20 \

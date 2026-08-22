@@ -53,10 +53,18 @@ esac
 RESULTS_DIR="${RESULTS_DIR:-Results_${_tag}}"
 OUT_DIR="${OUT_DIR:-Results_quant}"
 
+# Filter bank. The default is the six-band bank every published result used.
+# Override for band-count experiments, and pair it with RESULTS_DIR so the
+# fold artifacts cannot overwrite the six-band ones:
+#     FREQ_BANDS="[(6,15),(12,32)]" RESULTS_DIR=Results_bnci2015_2band sbatch roihu/01_train_array.sh
+# No spaces inside the list: it is passed to argparse as a single token.
+FREQ_BANDS="${FREQ_BANDS:-[(4,8),(8,14),(12,18),(16,24),(20,30),(26,40)]}"
+
 echo "--- roihu/env.sh ---"
 echo "  PROJECT_ROOT : ${PROJECT_ROOT}"
 echo "  MNE_DATA     : ${MNE_DATA}"
 echo "  DATASET      : ${DATASET}"
 echo "  RESULTS_DIR  : ${RESULTS_DIR}"
 echo "  N_FOLDS      : ${N_FOLDS}   SEED: ${SEED}"
+echo "  FREQ_BANDS   : ${FREQ_BANDS}"
 echo "--------------------"
