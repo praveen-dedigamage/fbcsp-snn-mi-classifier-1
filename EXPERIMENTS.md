@@ -3,8 +3,12 @@
 Living checklist. Update the **Status** column as things finish; the commands
 below are the authoritative ones to copy.
 
-Paper scope: binary motor imagery only, BNCI2015-001 (primary) and Cho2017
-(secondary). Deadline **2 September 2026**.
+Paper scope: binary motor imagery only, BNCI2015-001 (primary) and
+BNCI2014-002 (secondary). Deadline **2 September 2026**.
+
+Cho2017 is **out of scope**: there is a problem with the dataset that has to be
+dealt with separately. It is not reported and not released. Items 11-14 below
+are retired, kept only so their numbering does not shift.
 
 Working dir on Roihu: `/scratch/project_2003397/praveen/fbcsp`
 
@@ -24,10 +28,12 @@ Working dir on Roihu: `/scratch/project_2003397/praveen/fbcsp`
 | 8 | EA/CSP fusion experiment | **DONE** | ~290 BU (2 failed runs) | — |
 | 9 | Fair-baseline control, B15 | script ready, not run | moderate | — |
 | 10 | Move MOABB cache to scratch | **DONE** | free | — |
-| 11 | Cho2017 data prep | TODO | ~1 job | needs 10 |
-| 12 | Cho2017 pilot (3 subjects) | TODO | ~800 BU | needs 11 |
-| 13 | Cho2017 full training (52 subjects) | TODO | ~13,000 BU (est.) | needs 12 |
-| 14 | Cho2017 quantisation sweep | TODO | moderate | needs 13 |
+| 11-14 | Cho2017 (prep, pilot, training, sweep) | **RETIRED — out of scope** | — | — |
+| 15 | BNCI2014-002 training, 14 subj x 5 folds | **DONE** | ~1,700 BU | — |
+| 16 | BNCI2014-002 sweeps, fusion, fair baseline, energy | **DONE** | — | — |
+| 17 | Two-band bank (6-15, 12-32 Hz), B15 | RUNNING (job 788894) | ~1,800 BU | — |
+| 18 | Two-band bank, BNCI2014-002 | TODO | ~1,700 BU | — |
+| 19 | Two-band + m=12 control (48 features) | TODO, optional | ~3,500 BU | needs 17 |
 
 ---
 
@@ -139,8 +145,8 @@ cross-validated.
 `--n-channels` matters: the front-end stages scale with recording geometry,
 and the defaults describe BNCI2014-001 (22 ch). Everything else -- samples,
 window length, band count, class pairs -- is read from
-`pipeline_params.json`, so only the channel count has to be supplied. For
-Cho2017 use `--n-channels 64`.
+`pipeline_params.json`, so only the channel count has to be supplied:
+`--n-channels 13` for BNCI2015-001, `15` for BNCI2014-002.
 
 Replaces the 13.9 uJ figure, which was measured on the **4-class** network
 (288 features, 80 output neurons, 22 channels, 4 s window).
@@ -184,7 +190,7 @@ it helps only where precision is genuinely scarce.
 
 What is unconditional is the **storage reduction**: exact, independent of
 bit-width and subject, and growing with electrode count
-(`1 + n_ch/(P*2m)` predicts 9x at Cho2017's 64 channels).
+(`1 + n_ch/(P*2m)`: measured 2.6x at 13 channels, 2.9x at 15).
 
 NOTE: this experiment quantises the **front end only** (EA + CSP), so its
 split column (54.2 at 4 bits) is not the same measurement as the uniform
@@ -213,52 +219,80 @@ editing. Moving rather than re-downloading preserves the BNCI2015-001 cache.
 Do **not** run this while 525714 is alive — it calls `_load_raw()` per subject
 and would fail on the remainder.
 
-### 11. Cho2017 data prep
+### 11-14. Cho2017 — RETIRED, out of scope
+
+The data prep, pilot, full-training and sweep steps for Cho2017 were removed.
+There is a problem with the dataset that has to be dealt with separately, and
+it is neither reported nor released with this paper. Numbering is preserved so
+references to items 15+ elsewhere stay valid.
+
+---
+
+### 17. Two-band filter bank — BNCI2015-001
+
+Replaces the six-band bank with two wide bands, (6,15) and (12,32) Hz. The
+bank is the largest fixed term in the energy budget (one always-on Gm-C filter
+per band per channel), so two bands cut it to a third.
+
+FREQ_BANDS carries the bank; it defaults to the published six, so omitting it
+reproduces the paper exactly. Always pair it with RESULTS_DIR or the run
+overwrites the fold artifacts behind the published 74.7 %.
 
 ```bash
-csc-workspaces
+FREQ_BANDS="[(6,15),(12,32)]" RESULTS_DIR=Results_bnci2015_2band     sbatch --array=1-12 roihu/01_train_array.sh
+```
+
+Check the job header echoes `FREQ_BANDS : [(6,15),(12,32)]` before letting it
+run to completion. If it echoes the six-band list the override did not reach
+env.sh, and the run will produce plausible numbers that are just the published
+config in a new directory.
+
+Read the accuracy out. Point --quant-dir at a directory that does not exist:
+the default Results_quant holds the SIX-band sweeps, and collect_results would
+merge them into a two-band bundle, breaking the `all@32bit == fp32_reference`
+integrity check.
+
+```bash
+module load python-pytorch/2.10
+python collect_results.py     --results-dir Results_bnci2015_2band     --quant-dir   Results_quant_2band     --dataset     BNCI2015_001     --n-folds 5 --expect-subjects 12     --output   bundle_2band_BNCI2015_001.json     --markdown summary_2band_BNCI2015_001.md
+```
+
+Baseline to beat, paired by subject across 12: **74.7 +/- 16.0**.
+
+Observed at the pilot: MIBIF kept 9-11 of 16 features (56-69 %), against 24 of
+48 (50 %) for six bands. Not starved, but the feature count is 2.4x smaller, so
+a drop cannot be attributed to the bands alone without item 19.
+
+### 18. Two-band filter bank — BNCI2014-002
+
+14 subjects, so --array must be overridden. Both datasets are already cached
+under mne_data/MNE-bnci-data/~bci/database/ (001-2015 and 002-2014), so no
+prep job is needed. Note 00b_prepare_data.sh defaults N_SUBJECTS to 12 for any
+non-Cho2017 dataset — pass N_SUBJECTS=14 if the cache ever has to be rebuilt.
+
+```bash
+DATASET=BNCI2014_002 FREQ_BANDS="[(6,15),(12,32)]"     RESULTS_DIR=Results_bnci2014_002_2band     sbatch --array=1-14 roihu/01_train_array.sh
 ```
 
 ```bash
-DATASET=Cho2017 sbatch --time=03:00:00 roihu/00b_prepare_data.sh
+python collect_results.py     --results-dir Results_bnci2014_002_2band     --quant-dir   Results_quant_2band     --dataset     BNCI2014_002     --n-folds 5 --expect-subjects 14     --output   bundle_2band_BNCI2014_002.json     --markdown summary_2band_BNCI2014_002.md
 ```
 
-Cho2017 is 52 subjects at 64 channels against BNCI2015-001's 12 at 13, so
-roughly 20x the volume. The job prints `df` before and `du -sh` after —
-that is the one quantity that has not been measured.
+Baseline to beat, paired by subject across 14: **69.2 +/- 16.1**.
 
-### 12. Cho2017 pilot
+### 19. Two-band + m=12 control — optional, disambiguates 17 and 18
+
+Items 17 and 18 change the bank AND the feature count at once (48 -> 16 before
+MIBIF). If accuracy moves, this arm says which caused it: m=12 gives
+2*12*2 = 48 pre-selection features, matching the six-band bank exactly while
+keeping the two bands.
 
 ```bash
-DATASET=Cho2017 sbatch --array=1-3 --time=12:00:00 roihu/01_train_array.sh
+FREQ_BANDS="[(6,15),(12,32)]" RESULTS_DIR=Results_bnci2015_2band_m12     sbatch --array=1-12 roihu/01_train_array.sh --csp-components-per-band 12
 ```
 
-```bash
-seff <jobid>_1
-```
-
-The ~13,000 BU estimate for the full run is reasoning, not measurement. The
-SNN cost should barely change (features stay at `2m*K = 48` regardless of
-channel count); what grows is the Riemannian mean, 13x13 -> 64x64, once per
-fold. Three subjects turn the estimate into a number.
-
-### 13. Cho2017 full training
-
-```bash
-DATASET=Cho2017 sbatch --array=1-52 --time=12:00:00 roihu/01_train_array.sh
-```
-
-### 14. Cho2017 quantisation sweep
-
-```bash
-DATASET=Cho2017 sbatch --time=12:00:00 roihu/02_quant_sweep.sh
-```
-
-Scientifically the most important reason to run Cho2017: EA scales as
-`n_ch^2` while CSP scales as `n_ch`, so at 64 channels EA is ~8x the CSP
-block rather than ~1.6x. If the 4-bit collapse is caused by whitener dynamic
-range, it should be sharper there — and 52 subjects make the claim far harder
-to dismiss than 12.
+Only worth the BU if the two-band result needs attributing rather than just
+answering "does a two-band bank work at all".
 
 ---
 
@@ -273,9 +307,9 @@ to dismiss than 12.
 
 ## Open questions for the paper
 
-- Cho2017's numbers come from the earlier V100 runs while BNCI2015-001 is from
-  GH200. Defensible (LDA/SVM reproduce exactly) but must be stated in the
-  setup section rather than left implicit.
+- Two bands change the bank AND the feature count (48 -> 16 before MIBIF).
+  Item 19 is the control that separates them; decide whether the attribution
+  is worth the BU.
 - The SVM hyperparameter grid is not stated; the artifacts record
   `svm_best_c` and `svm_best_gamma`.
 - The introduction claims an analog front end with no ADC, while the bit sweep
