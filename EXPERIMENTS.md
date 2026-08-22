@@ -34,6 +34,7 @@ Working dir on Roihu: `/scratch/project_2003397/praveen/fbcsp`
 | 17 | Two-band bank (6-15, 12-32 Hz), B15 | RUNNING (job 788894) | ~1,800 BU | — |
 | 18 | Two-band bank, BNCI2014-002 | TODO | ~1,700 BU | — |
 | 19 | Two-band + m=12 control (48 features) | TODO, optional | ~3,500 BU | needs 17 |
+| 20 | Bit-width sweep on the two-band bank | TODO | moderate | needs 17, 18 |
 
 ---
 
@@ -293,6 +294,64 @@ FREQ_BANDS="[(6,15),(12,32)]" RESULTS_DIR=Results_bnci2015_2band_m12     sbatch 
 
 Only worth the BU if the two-band result needs attributing rather than just
 answering "does a two-band bank work at all".
+
+---
+
+### 20. Bit-width sweep on the two-band bank
+
+Repeats the paper's quantisation study against the two-band front end. The
+sweep quantises the composed spatial filters with a separate scale PER BAND,
+so the front-end group is band-count dependent by construction: none of
+Table 2 or Figure 2 carries over from the six-band bank.
+
+Needs items 17 and 18 finished — the sweep reads saved fold artifacts.
+
+**OUT_DIR is not optional.** Output is named
+`quant_sweep_<dataset>_<mode>[_fused].csv` with NO band count in the filename,
+so the default OUT_DIR=Results_quant would overwrite the six-band CSVs behind
+the published Table 2. There is no undo.
+
+**FUSE=1 is what the paper reports.** Table 2 and Figure 2 come from the
+`_fused` sweeps, where the EA whitener is composed into the spatial filters and
+the front end is a single group. A split run is a different measurement.
+
+```bash
+DATASET=BNCI2015_001 RESULTS_DIR=Results_bnci2015_2band     OUT_DIR=Results_quant_2band FUSE=1 sbatch roihu/02_quant_sweep.sh
+
+DATASET=BNCI2014_002 RESULTS_DIR=Results_bnci2014_002_2band     OUT_DIR=Results_quant_2band FUSE=1 sbatch roihu/02_quant_sweep.sh
+```
+
+One job runs both uniform and per-group modes. Subject counts come from the
+DATASET case block (12 and 14), so SUBJECTS does not need setting.
+
+To chain straight off training instead of waiting:
+
+```bash
+TRAIN=$(FREQ_BANDS="[(6,15),(12,32)]" RESULTS_DIR=Results_bnci2015_2band     sbatch --parsable --array=1-12 roihu/01_train_array.sh)
+DATASET=BNCI2015_001 RESULTS_DIR=Results_bnci2015_2band     OUT_DIR=Results_quant_2band FUSE=1     sbatch --dependency=afterok:${TRAIN} roihu/02_quant_sweep.sh
+```
+
+Then rebuild the bundles with --quant-dir pointing at the two-band sweeps, so
+the accuracy and sweep rows in one bundle describe the same pipeline:
+
+```bash
+python collect_results.py     --results-dir Results_bnci2015_2band     --quant-dir   Results_quant_2band     --dataset     BNCI2015_001     --n-folds 5 --expect-subjects 12     --output   bundle_2band_BNCI2015_001.json     --markdown summary_2band_BNCI2015_001.md
+```
+
+First thing to check in the result: the 32-bit row must equal that sweep's own
+fp32_reference exactly, on every subject and fold. collect_results asserts it.
+If it fails the harness is wrong and no other bit-width means anything.
+
+Six-band baselines, uniform fused, to compare against:
+
+| Dataset | 32 | 16 | 8 | 6 | 4 |
+|---|---|---|---|---|---|
+| BNCI2015-001 | 74.7 | 74.7 | 74.5 | 73.6 | 57.2 |
+| BNCI2014-002 | 69.2 | 69.5 | 69.5 | 67.9 | 56.9 |
+
+The interesting question is whether the four-bit collapse softens. The paper
+attributes it to the front end spanning the widest dynamic range; two wider
+bands mean fewer, differently-conditioned matrices, so the collapse could move.
 
 ---
 
