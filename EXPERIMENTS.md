@@ -443,6 +443,33 @@ Two things changed and both need writing up:
    snn_b is worst on both (14.5 vs csp 10.0 on B15; 11.4 vs csp 8.3 on B14).
    Shrinking the front end moved the fragility into the classifier biases.
 
+Band rationale for 2.2 -- replaces the constant-Q argument, which is false for
+two bands (fractional bandwidths 0.86 and 0.91).
+
+The bands target the ERD ranges, mu 8-14 and beta 14-32 Hz, but are widened to
+6-15 and 12-32 so the Butterworth roll-off falls OUTSIDE the range of interest.
+A 4th-order causal Butterworth is -3 dB at its cutoffs, so setting the cutoffs
+at the ERD edges would attenuate by half exactly where the discriminative
+signal is. Measured at 512 Hz, single forward pass:
+
+| band | 8 Hz | 10 Hz | 12 Hz | 14 Hz | 20 Hz | 26 Hz | 30 Hz | 32 Hz |
+|---|---|---|---|---|---|---|---|---|
+| 6-15  | -0.00 | -0.00 | -0.02 | -0.97 | | | | |
+| 12-32 | | | -3.01 | -0.18 | -0.00 | -0.04 | -1.12 | -3.01 |
+
+Cutoffs exactly at the ERD edges give -3.01 dB at 8, 14 and 32 Hz. The margin
+buys 3 dB at 8 Hz and 2.8 dB at 14 Hz.
+
+The 12-15 Hz overlap is deliberate: across it at least one band is within ~1 dB
+of flat, so the mu/beta boundary at 14 Hz sits in the upper band's flat region
+(-0.18 dB) instead of being orphaned between two roll-offs.
+
+OPEN: band 2's upper cutoff (32 Hz) equals the top of its target range, so it
+is -3.01 dB there -- the one edge where the principle is not applied. -1.12 dB
+at 30 Hz. Either accept 32 as a nominal edge with beta ERD concentrated lower,
+or widen to ~12-36. Decide before this is written into 2.2, since a reviewer
+who reads the rationale will check the edges against it.
+
 Manuscript changes queued (NOT started, manuscript is on hold):
 
 - 2.2: the band list, the fractional-bandwidth-0.4 rationale (2 bands are 0.86
