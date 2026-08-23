@@ -35,6 +35,7 @@ Working dir on Roihu: `/scratch/project_2003397/praveen/fbcsp`
 | 18 | Two-band bank, BNCI2014-002 | TODO | ~1,700 BU | — |
 | 19 | Two-band + m=12 control (48 features) | TODO, optional | ~3,500 BU | needs 17 |
 | 20 | Bit-width sweep on the two-band bank | TODO | moderate | needs 17, 18 |
+| 21 | Fairness control on the two-band bank | TODO | moderate | needs 17, 18 |
 
 ---
 
@@ -352,6 +353,46 @@ Six-band baselines, uniform fused, to compare against:
 The interesting question is whether the four-bit collapse softens. The paper
 attributes it to the front end spanning the widest dynamic range; two wider
 bands mean fewer, differently-conditioned matrices, so the collapse could move.
+
+---
+
+### 21. Fairness control on the two-band bank
+
+Fills the `LDA full-ts` / `SVM full-ts` columns, which come from
+fair_baseline_results.json in each fold directory. Needs items 17 and 18.
+
+**This job WRITES into RESULTS_DIR** rather than reading it, so an unset
+RESULTS_DIR injects two-band baselines into the artifacts behind the published
+numbers. 04_fair_baseline.sh also hardcodes --array=1-12, so BNCI2014-002 must
+override it or subjects 13 and 14 silently keep empty columns.
+
+```bash
+DATASET=BNCI2015_001 RESULTS_DIR=Results_bnci2015_2band     sbatch --array=1-12 roihu/04_fair_baseline.sh
+
+DATASET=BNCI2014_002 RESULTS_DIR=Results_bnci2014_002_2band     sbatch --array=1-14 roihu/04_fair_baseline.sh
+```
+
+Then re-run the item 17/18 collect_results commands; the columns populate and
+two snn_vs_*_fullts rows appear in the paired table. aggregate_fair_baseline.py
+is NOT needed -- collect_results reads the per-fold JSON directly, and that
+script only prints a table. Its one use is listing folds whose fair-baseline
+file is missing.
+
+Six-band baselines: 53.9 / 53.3 (B15) and 52.5 / 53.2 (B14), all at chance.
+If the two-band controls also sit at chance the paper's central claim survives
+the new bank. If they rise, the fairness argument weakens, and that matters
+more than the accuracy parity below.
+
+Accuracy result already in hand (item 17/18), paired by subject:
+
+| Dataset | 6-band | 2-band | paired delta | wins | Wilcoxon |
+|---|---|---|---|---|---|
+| BNCI2015-001 | 74.7 +/- 16.0 | 74.6 +/- 17.1 | -0.06 | 6/12 | 0.87 |
+| BNCI2014-002 | 69.2 +/- 16.1 | 70.5 +/- 16.5 | +1.32 | 6/14 | 0.54 |
+
+Parity on both. The +1.32 is carried by four subjects while eight lost
+slightly, which is why the rank test sees 6/14. Same accuracy from a third of
+the filter bank.
 
 ---
 
