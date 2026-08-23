@@ -6,6 +6,11 @@ below are the authoritative ones to copy.
 Paper scope: binary motor imagery only, BNCI2015-001 (primary) and
 BNCI2014-002 (secondary). Deadline **2 September 2026**.
 
+**DECISION 2026-08-23: the two-band bank (6-15, 12-32 Hz) is the pipeline for
+the new manuscript.** The six-band results stay as the record of what the
+earlier draft reported; they are not being rewritten yet. Every new experiment
+runs two bands unless it explicitly says otherwise.
+
 Cho2017 is **out of scope**: there is a problem with the dataset that has to be
 dealt with separately. It is not reported and not released. Items 11-14 below
 are retired, kept only so their numbering does not shift.
@@ -36,6 +41,7 @@ Working dir on Roihu: `/scratch/project_2003397/praveen/fbcsp`
 | 19 | Two-band + m=12 control (48 features) | TODO, optional | ~3,500 BU | needs 17 |
 | 20 | Bit-width sweep on the two-band bank | TODO | moderate | needs 17, 18 |
 | 21 | Fairness control on the two-band bank | TODO | moderate | needs 17, 18 |
+| 22 | Two-band results complete; manuscript rewrite queued | **DONE / on hold** | — | — |
 
 ---
 
@@ -393,6 +399,68 @@ Accuracy result already in hand (item 17/18), paired by subject:
 Parity on both. The +1.32 is carried by four subjects while eight lost
 slightly, which is why the rank test sees 6/14. Same accuracy from a third of
 the filter bank.
+
+---
+
+### 22. Two-band results — COMPLETE, and what the manuscript needs
+
+All four jobs done for both datasets: training, fairness control, and the
+uniform + per-group sweeps, fused. 7/7 integrity checks pass on both bundles,
+including all@32bit == fp32_reference exact. Bundles and summaries pulled off
+Roihu to a local directory outside both repos.
+
+Paired by subject, two-band against six-band:
+
+| | B15 6-band | B15 2-band | p | B14 6-band | B14 2-band | p |
+|---|---|---|---|---|---|---|
+| SNN | 74.7 | 74.6 | 0.87 | 69.2 | 70.5 | 0.38 |
+| LDA | 76.7 | 77.3 | 0.23 | 71.7 | 74.4 | 0.09 |
+| SVM | 72.0 | 75.8 | **0.034** | 70.4 | 72.0 | 0.35 |
+| LDA full-ts | 53.9 | 52.7 | 0.23 | 52.5 | 51.8 | 0.49 |
+| SVM full-ts | 53.3 | 52.3 | 0.23 | 53.2 | 51.4 | 0.11 |
+
+Accuracy is at parity. The fairness control HOLDS: within the two-band run the
+SNN beats the full-ts controls by +21.9/+22.4 (11/12 subjects, p=0.00098) and
++18.8/+19.2 (12/14, p<=0.003). The paper's central claim survives the bank
+change.
+
+Two things changed and both need writing up:
+
+1. Quantisation is less forgiving. Uniform fused, delta vs fp32:
+
+   | | 8 bit | 6 bit | 4 bit |
+   |---|---|---|---|
+   | B15 6-band | -0.2 | -1.1 | -17.5 |
+   | B15 2-band | -0.6 | -3.0 | -18.3 |
+   | B14 6-band | +0.2 | -1.4 | -12.4 |
+   | B14 2-band | -1.0 | -3.0 | -15.6 |
+
+   "Eight bits are free" still holds. "Six bits cost about one point" does not:
+   it is 3.0 on both.
+
+2. The per-group ordering INVERTED. Six bands: the composed front end dominates
+   on both datasets, which is the whole argument of section 4.3. Two bands:
+   snn_b is worst on both (14.5 vs csp 10.0 on B15; 11.4 vs csp 8.3 on B14).
+   Shrinking the front end moved the fragility into the classifier biases.
+
+Manuscript changes queued (NOT started, manuscript is on hold):
+
+- 2.2: the band list, the fractional-bandwidth-0.4 rationale (2 bands are 0.86
+  and 0.91, not constant-Q), and "six bands rather than FBCSP's nine".
+- 2.3: 2mK = 48 becomes 16; F averages ~9.8 not 24; parameter count ~3,300 not
+  4,200.
+- Table 1 and 4.1: all accuracy and full-ts numbers.
+- Table 2 and 4.2: the whole sweep, and the six-bit claim.
+- 4.3 and Figure 2: the argument reverses -- front end no longer dominates.
+- 4.4 and Table 3: the Gm-C bank is n_bands x n_channels, so the largest fixed
+  energy term drops to a third. Recompute with --from-artifacts, which reads
+  n_bands from the fold records. compute_energy.py:192's N_CSP_MACS constant
+  still hardcodes 6 and is wrong off that path.
+- Abstract, intro and discussion: any figure quoted from the above.
+
+Open: whether FREQ_BANDS' default in env.sh should become the two-band bank.
+Leaving it at six keeps the published results reproducible by default; changing
+it makes the new pipeline the default and the old one the override. Not decided.
 
 ---
 
